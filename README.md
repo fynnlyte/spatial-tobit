@@ -38,6 +38,6 @@ Und falls irgendwas nicht klappt, hier schauen:
 
 Anschließend innerhalb der Umgebung (sollte `(probmod)` noch sichtbar sein) testen, ob die Installation geklappt hat:
 
-`python python pystan_example.py`
+`python pystan_example.py`
 
-Die Umgebung lassen wir dann erstmal so und sollten eigentlich keine komischen Überraschungen durch unterschiedliche Versionen bekommen. Müssten auch alle Pakete zum Data Cleaning, Visualisieren etc dabei sein.
+Die Umgebung lassen wir dann erstmal so und sollten eigentlich keine komischen Überraschungen durch unterschiedliche Versionen bekommen. Müssten auch alle Pakete zum Data Cleaning, Visualisieren etc dabei sein. Programme wie Spyder/ Jupyter Notebook könnt ihr natürlich auch wieder deinstallieren / aus dem Spec-File rausnehmen, wenn ihr die nicht verwendet.

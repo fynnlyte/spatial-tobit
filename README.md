@@ -1,3 +1,8 @@
+## Resourcen
+[Conditional Autoregressive Models in Stan](https://github.com/mbjoseph/CARstan). Hiervon hatte ich auch einiges für die Präsi verwendet.
+[Stan Documentation über censored data](https://mc-stan.org/docs/2_18/stan-users-guide/truncated-or-censored-data.html). Das will ich mit ein paar Testdaten implementieren. Oder trifft _truncated data_ eher auf's Tobit model zu?
+
+
 ## Anleitung
 
 Moin - installiert bitte [Anaconda](https://www.anaconda.com/distribution/) bzw [Miniconda](https://docs.conda.io/en/latest/miniconda.html) wenn ihr's noch nicht habt. Anschließend cloned ihr mein Repo dorthin, wo ihr es haben wollt, und richtet es dann ein:

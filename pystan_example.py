@@ -1,5 +1,10 @@
 from pystan import StanModel
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 import numpy as np
+import pandas as pd
+
 model_code = 'parameters {real y;} model {y ~ normal(0,1);}'
 model = StanModel(model_code=model_code)
 y = model.sampling().extract()['y']
@@ -59,4 +64,70 @@ linear_fit = linear_model.sampling(data=linear_data)
 linear_res = linear_fit.extract()
 α = np.mean(linear_res['alpha'])
 β = np.mean(linear_res['beta'])
+
+##
+# Tobit Model
+# according to https://www.r-bloggers.com/bayesian-models-with-censored-data-a-comparison-of-ols-tobit-and-bayesian-models/
+##
+tobit_data = pd.read_csv("https://stats.idre.ucla.edu/stat/data/tobit.csv")
+# Stan does not support categorical features - need dummy variables.
+cat_trans = Pipeline(steps=[('onehot', OneHotEncoder())])
+ct = ColumnTransformer([('cat', cat_trans, ['prog'])])
+coded_progs = ['vocational', 'general','academic']
+trans_progs = pd.DataFrame(ct.fit_transform(tobit_data), columns=coded_progs)
+tobit_data = pd.concat([tobit_data, trans_progs], axis=1)
+
+
+# 1) as comparison, do a linear model:
+tobit_linear_code = """
+data {
+    int<lower=0> N; // number of data items
+    int<lower=0> K; // number of predictors
+    matrix[N, K] X; // predictor matrix
+    vector[N] y;  // outcome vector
+}
+parameters {
+    real alpha; // intercept
+    vector[K] beta;  // coefficients for predictors
+    real<lower=0> sigma; // error scale
+}
+model {
+    y ~ normal(X * beta + alpha, sigma); // likelihood
+}
+"""
+tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': 5,
+                  'X': tobit_data[['read', 'math'] + coded_progs]}
+tobit_linear_model = StanModel(model_name='tobit_linear', model_code=tobit_linear_code)
+tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict)
+tob_lin_res = tob_lin_fit.extract()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

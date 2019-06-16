@@ -1,5 +1,6 @@
-## Resourcen
+## Ressourcen
 [Conditional Autoregressive Models in Stan](https://github.com/mbjoseph/CARstan). Hiervon hatte ich auch einiges für die Präsi verwendet.
+
 [Stan Documentation über censored data](https://mc-stan.org/docs/2_18/stan-users-guide/truncated-or-censored-data.html). Das will ich mit ein paar Testdaten implementieren. Oder trifft _truncated data_ eher auf's Tobit model zu?
 
 

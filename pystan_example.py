@@ -1,9 +1,10 @@
 from pystan import StanModel
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 import numpy as np
 import pandas as pd
+from urllib.request import urlretrieve
 
 model_code = 'parameters {real y;} model {y ~ normal(0,1);}'
 model = StanModel(model_code=model_code)
@@ -69,11 +70,16 @@ linear_res = linear_fit.extract()
 # Tobit Model
 # according to https://www.r-bloggers.com/bayesian-models-with-censored-data-a-comparison-of-ols-tobit-and-bayesian-models/
 ##
-tobit_data = pd.read_csv("https://stats.idre.ucla.edu/stat/data/tobit.csv")
+file_location = 'data/ucla_tobit_example.csv'
+try:
+    tobit_data = pd.read_csv(file_location)
+except:
+    urlretrieve("https://stats.idre.ucla.edu/stat/data/tobit.csv", file_location)
+    tobit_data = pd.read_csv(file_location)
 # Stan does not support categorical features - need dummy variables.
 cat_trans = Pipeline(steps=[('onehot', OneHotEncoder())])
 ct = ColumnTransformer([('cat', cat_trans, ['prog'])])
-coded_progs = ['vocational', 'general','academic']
+coded_progs = ['academic', 'general','vocational']
 trans_progs = pd.DataFrame(ct.fit_transform(tobit_data), columns=coded_progs)
 tobit_data = pd.concat([tobit_data, trans_progs], axis=1)
 
@@ -89,23 +95,66 @@ data {
 parameters {
     real alpha; // intercept
     vector[K] beta;  // coefficients for predictors
-    real<lower=0> sigma; // error scale
+    real<lower=0> sigma ; //  error scale
 }
 model {
     y ~ normal(X * beta + alpha, sigma); // likelihood
 }
 """
-tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': 5,
-                  'X': tobit_data[['read', 'math'] + coded_progs]}
+predictors = ['read', 'math', 'general', 'vocational']
+tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': len(predictors),
+                  'X': tobit_data[predictors]}
 tobit_linear_model = StanModel(model_name='tobit_linear', model_code=tobit_linear_code)
-tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict)
+tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict, iter=50000, chains=4)
 tob_lin_res = tob_lin_fit.extract()
 
+al = tob_lin_res['alpha'][25001:].mean()
+beta = tob_lin_res['beta'][25001:].mean(axis=0)
+# getting similar values for read and math like in the example, cool!
+# intercept: 242.735; mydata$read: 2.553; mydata$math 5.383 
+# CAVEAT: verify the tobit_data that the columns are correctly encoded!
+# first, I got different values but now also the coeffs for general and vocational match
+# mydata$general: -13.741, mydata$vocational: -48.835
 
 
+# 2) using a censored model:
+censored_code = """
+data {
+    int<lower=0> N; // number of data items
+    int<lower=0> K; // number of predictors
+    matrix[N, K] X; // predictor matrix (uncensored)
+    vector[N] y;  // observed variables
+    int<lower=0> N_cens; // number of censored variables
+    real<lower=max(y)> U; // upper limit
+    matrix[N_cens, K] X_cens; // predictor matrix (censored)
+}
+parameters {
+    real alpha;
+    vector[K] beta;
+    real<lower=0> sigma;
+    vector<lower=U>[N_cens] y_cens; // censored vars as sampled parameter
+}
+model {
+    y ~ normal(X * beta + alpha, sigma);
+    y_cens ~ normal(X_cens * beta + alpha, sigma); // and likelihood
+}
+"""
+censored_model = StanModel(model_code=censored_code)
+not_800 = tobit_data['apt'] != 800
+is_800 = tobit_data['apt'] == 800
+N_cens = is_800.sum()
+censored_dict = {'X': tobit_data[not_800][predictors], 'N': tobit_data.shape[0]- N_cens,
+                 'y': tobit_data[not_800]['apt'], 'U': 800, 'N_cens': N_cens, 
+                 'K': len(predictors), 'X_cens': tobit_data[is_800][predictors], 
+                 'y_cens': tobit_data[is_800]['apt']}
+censored_fit = censored_model.sampling(data=censored_dict, iter=50000, chains=4)
+censored_res = censored_fit.extract()
+al_2 = censored_res['alpha'][25001:].mean()
+beta_2 = censored_res['beta'][25001:].mean(axis=0)
 
-
-
+# nice - this looks quite close to the values from the tutorial:
+# Intercept:  209.5488
+# mydata$read: 2.6980, mydata.math: 5.9148
 
 
 

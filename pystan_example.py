@@ -82,6 +82,8 @@ ct = ColumnTransformer([('cat', cat_trans, ['prog'])])
 coded_progs = ['academic', 'general','vocational']
 trans_progs = pd.DataFrame(ct.fit_transform(tobit_data), columns=coded_progs)
 tobit_data = pd.concat([tobit_data, trans_progs], axis=1)
+predictors = ['read', 'math', 'general', 'vocational']
+
 
 
 # 1) as comparison, do a linear model:
@@ -101,9 +103,9 @@ model {
     y ~ normal(X * beta + alpha, sigma); // likelihood
 }
 """
-predictors = ['read', 'math', 'general', 'vocational']
 tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': len(predictors),
                   'X': tobit_data[predictors]}
+
 tobit_linear_model = StanModel(model_name='tobit_linear', model_code=tobit_linear_code)
 tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict, iter=50000, chains=4)
 tob_lin_res = tob_lin_fit.extract()
@@ -118,6 +120,12 @@ beta = tob_lin_res['beta'][25001:].mean(axis=0)
 
 
 # 2) using a censored model:
+# but now I have the same sigma? Does this make sense??
+# yes - in the paper, the difference between ε_{it} ~ normal(0,σ^2) 
+# and θ^m_{it} ~ normal(0, δ^2_m) is clearly made.
+
+# can I specify U directly or does it have to be included in data? -> seems OK
+#     real<lower=max(y)> U; // upper limit
 censored_code = """
 data {
     int<lower=0> N; // number of data items
@@ -125,14 +133,13 @@ data {
     matrix[N, K] X; // predictor matrix (uncensored)
     vector[N] y;  // observed variables
     int<lower=0> N_cens; // number of censored variables
-    real<lower=max(y)> U; // upper limit
     matrix[N_cens, K] X_cens; // predictor matrix (censored)
 }
 parameters {
     real alpha;
     vector[K] beta;
     real<lower=0> sigma;
-    vector<lower=U>[N_cens] y_cens; // censored vars as sampled parameter
+    vector<lower=800>[N_cens] y_cens; // censored vars as sampled parameter
 }
 model {
     y ~ normal(X * beta + alpha, sigma);
@@ -144,7 +151,7 @@ not_800 = tobit_data['apt'] != 800
 is_800 = tobit_data['apt'] == 800
 N_cens = is_800.sum()
 censored_dict = {'X': tobit_data[not_800][predictors], 'N': tobit_data.shape[0]- N_cens,
-                 'y': tobit_data[not_800]['apt'], 'U': 800, 'N_cens': N_cens, 
+                 'y': tobit_data[not_800]['apt'], 'N_cens': N_cens, # 'U': 800, 
                  'K': len(predictors), 'X_cens': tobit_data[is_800][predictors], 
                  'y_cens': tobit_data[is_800]['apt']}
 censored_fit = censored_model.sampling(data=censored_dict, iter=50000, chains=4)
@@ -156,11 +163,90 @@ beta_2 = censored_res['beta'][25001:].mean(axis=0)
 # Intercept:  209.5488
 # mydata$read: 2.6980, mydata.math: 5.9148
 
+# in the paper, there is in addition to different covariates:
+# 1) a temporal relation (same coefficients for different t)
+# 2) a spatial relation (same coefficients for different locations)
 
+# 1) let's simulate data for 4 years from that school where the students get sligthly 
+#    dumber on average
+year_list = []
+for t in range(4):
+    df_copy = tobit_data.copy()
+    df_copy['apt'] = tobit_data['apt'] - np.round(t + t*np.random.rand(tobit_data.shape[0]))
+    df_copy['read'] = tobit_data['read'] - np.round(t + t/2*np.random.rand(tobit_data.shape[0]))
+    df_copy['math'] = tobit_data['math'] - np.round(t + t/2*np.random.rand(tobit_data.shape[0]))
+    if tobit_data['apt'].max() > 800:
+        print('bad')
+    # just ensure we still have some vals
+    df_copy.loc[6, 'apt'] = 800
+    df_copy.loc[81, 'apt'] = 800
+    df_copy.loc[131, 'apt'] = 800
+    df_copy.loc[179, 'apt'] = 800
+    year_list.append(df_copy)
+    
+    
 
+# the documentation gives some hints on how to iterate through n-dim structures
+# - matrices should be used when doing matrix calculation, else build arrays
+# - vectorisation is better than loops (but I guess I need some loops here)
+    
+# now this becomes difficult with splitting censored from uncensored x)
+# should maybe try the other approach with the normal_lccdf
+tobit_temporal = """
+data {
+    int<lower=0> T; // period t = 1,...,T
+    int<lower=0> K; // number of predictors
+    int<lower=0> N[T]; // uncensored vars per time
+    int<lower=0> N_cens[T]; // cens vars per time
+    vector[N[T]] y[T];  // arr of X for uncensored
+    matrix[N[T], K] X[T]; // arr of X for uncensored
+    matrix[N_cens[T], K] X_cens[T]; // arr of X for censored
+}
+parameters {
+    real beta_0;
+    vector[K] beta;
+    real<lower=0> sigma;
+    vector<lower=800>[N_cens[T]] y_cens[T];
+}
+model {
+    for (t in 1:T)
+      y[t] ~ normal(X[t] * beta + beta_0, sigma);
+    for (t in 1:T)
+      y_cens[t] ~ normal(X_cens[t] * beta + beta_0, sigma);
+}
+"""
+temp_model = StanModel(model_code=tobit_temporal)
 
+T = len(year_list)
+K = len(predictors)
+N_T = list()
+N_cens_T = list()
+y_T = list()
+X_T = list()
+X_cens_T = list()
+y_cens_T = list()
+for i in range(T):
+    year_data = year_list[i]
+    not_800 = year_data['apt'] != 800
+    is_800 = year_data['apt'] == 800
+    N_cens = is_800.sum()
+    X_T.append(year_data[not_800][predictors])
+    N_T.append(year_data.shape[0]-N_cens)
+    y_T.append(year_data[not_800]['apt'])
+    N_cens_T.append(N_cens)
+    X_cens_T.append(year_data[is_800][predictors])
+    y_cens_T.append(year_data[is_800]['apt'])
+temp_dict = {'X': X_T, 'N': N_T, 'y': y_T, 'N_cens': N_cens_T, 'K': K, 'T': T, 
+             'X_cens': X_cens_T, 'y_cens': y_cens_T}
 
+# this does not quite work yet.
+temp_fit = temp_model.sampling(data=temp_dict, iter=50000, chains=4)
+temp_res = temp_model.extract()
 
+# next steps would be:
+# - add more schools
+# - simulate the data in a way that schools in the same neighborhood are similarily bad
+#   (1 in matrix means same area)
 
 
 

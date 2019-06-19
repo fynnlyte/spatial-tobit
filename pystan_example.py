@@ -15,21 +15,8 @@ print(y.mean())
 
 
 # Example from „Kruschke: Doing Bayesian Data Analysis”
-coin_code = """
-data {
-    int<lower=0> N;
-    int y[N]; // vec of N ints
-}
-parameters {
-    real<lower=0, upper=1> theta;
-}
-model {
-    theta ~ beta(1,1);
-2    y ~ bernoulli(theta);
-}
-"""
 # create the DSO (dynamic shared object)
-coin_model = StanModel(model_code=coin_code, model_name='coin')
+coin_model = StanModel(file='models/bernoulli_example.stan', model_name='coin')
 # generate some data
 N = 50;
 z = 10;
@@ -43,22 +30,7 @@ coin_test = coin_fit.extract()
 ##
 # 1st example from Stan User's Guide
 ##
-linear_code = """
-data {
-    int<lower=0> N;
-    vector[N] x;
-    vector[N] y;
-}
-parameters {
-    real alpha;
-    real beta;
-    real<lower=0> sigma;
-}
-model {
-    y ~ normal(alpha + beta * x, sigma);
-}
-"""
-linear_model = StanModel(model_name='linear', model_code=linear_code)
+linear_model = StanModel(model_name='linear', file='models/linear_example.stan')
 x = list(range(10))
 y = [1.1, 2.04, 3.07, 3.88, 4.95, 6.11, 7.03, 7.89, 8.91, 10]
 linear_data = {'x':x, 'y':y, 'N': 10}
@@ -88,26 +60,9 @@ predictors = ['read', 'math', 'general', 'vocational']
 
 
 # 1) as comparison, do a linear model:
-tobit_linear_code = """
-data {
-    int<lower=0> N; // number of data items
-    int<lower=0> K; // number of predictors
-    matrix[N, K] X; // predictor matrix
-    vector[N] y;  // outcome vector
-}
-parameters {
-    real alpha; // intercept
-    vector[K] beta;  // coefficients for predictors
-    real<lower=0> sigma ; //  error scale
-}
-model {
-    y ~ normal(X * beta + alpha, sigma); // likelihood
-}
-"""
 tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': len(predictors),
                   'X': tobit_data[predictors]}
-
-tobit_linear_model = StanModel(model_name='tobit_linear', model_code=tobit_linear_code)
+tobit_linear_model = StanModel(file='models/linear_students.stan')
 tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict, iter=50000, chains=4)
 tob_lin_res = tob_lin_fit.extract()
 
@@ -126,52 +81,8 @@ beta = tob_lin_res['beta'][25001:].mean(axis=0)
 # yes - in the paper, the distinction between ε_{it} ~ normal(0,σ^2) 
 # and θ^m_{it} ~ normal(0, δ^2_m) is clearly made.
 
-# can I specify U directly or does it have to be included in data? -> must include.
-censored_code_implicit = """
-data {
-    int<lower=0> N; // number of data items
-    int<lower=0> K; // number of predictors
-    matrix[N, K] X; // predictor matrix (uncensored)
-    vector[N] y;  // observed variables
-    int<lower=0> N_cens; // number of censored variables
-    matrix[N_cens, K] X_cens; // predictor matrix (censored)
-    real<lower=max(y)> U;
-}
-parameters {
-    real alpha;
-    vector[K] beta;
-    real<lower=0> sigma;
-    vector<lower=U>[N_cens] y_cens; // censored vars as sampled parameter
-}
-model {
-    y ~ normal(X * beta + alpha, sigma);
-    y_cens ~ normal(X_cens * beta + alpha, sigma); // and likelihood
-}
-"""
-
-censored_code_explicit = """
-data {
-    int<lower=0> N; // number of data items
-    int<lower=0> K; // number of predictors
-    matrix[N, K] X; // predictor matrix (uncensored)
-    vector[N] y;  // observed variables
-    int<lower=0> N_cens; // number of censored variables
-    matrix[N_cens, K] X_cens; // predictor matrix (censored)
-}
-parameters {
-    real alpha;
-    vector[K] beta;
-    real<lower=0> sigma;
-    vector<lower=800>[N_cens] y_cens; // censored vars as sampled parameter
-}
-model {
-    y ~ normal(X * beta + alpha, sigma);
-    y_cens ~ normal(X_cens * beta + alpha, sigma); // and likelihood
-}
-"""
-
-
-censored_model = StanModel(model_code=censored_code_explicit)
+# can I specify U directly or does it have to be included in data? -> both possible.
+censored_model = StanModel(file='models/tobit_students_explicit.stan')
 not_800 = tobit_data['apt'] != 800
 is_800 = tobit_data['apt'] == 800
 N_cens = is_800.sum()
@@ -190,17 +101,20 @@ beta_2 = censored_res['beta'][25001:].mean(axis=0)
 # Intercept:  209.5488
 # mydata$read: 2.6980, mydata.math: 5.9148
 
-# if I include all original points:
+# if I include all original points and run the model:
 # Intercept: 198.18
 # read: 2.72, math: 6.15
-
-# without them it's better:
-# censored_dict = {'X': tobit_data[predictors], 'N': tobit_data.shape[0], 
+censored_dict = {'X': tobit_data[predictors], 'N': tobit_data.shape[0], 
                  'y': tobit_data['apt'], 'N_cens': N_cens,
                  'K': len(predictors), 'X_cens': tobit_data[is_800][predictors], 
-                 'y_cens': tobit_data[is_800]['apt']}Intercept: 208.666
+                 'y_cens': tobit_data[is_800]['apt']}
+
+# without them it's better. Need to filter the out the censored values!:
+# Intercept: 208.666
 # read: 2.69, math: 5.93
 ####
+
+
 
 ####
 # Let's now try with the cumulative distribution function.
@@ -209,26 +123,7 @@ beta_2 = censored_res['beta'][25001:].mean(axis=0)
 #   usually +/- 2
 # real normal_lccdf(reals y | reals mu, reals sigma)
 # - if the (y-mu)/sigma < -37.5 or > 8.25, the will be an over/ underflow
-censored_cum = """
-data {
-    int<lower=0> N; // number of data items
-    int<lower=0> K; // number of predictors
-    matrix[N, K] X; // predictor matrix
-    vector[N] y;  // all observed variables
-    int<lower=0> N_cens; // number of censored variable
-    real<lower=max(y)> U; // censoring point
-}
-parameters {
-    real alpha;
-    vector[K] beta;
-    real<lower=0> sigma;
-}
-model {
-    y ~ normal(X * beta + alpha, sigma);
-    target += N_cens * (normal_lccdf(U | X * beta + alpha, sigma));
-}
-"""
-cens_cum_model = StanModel(model_code=censored_cum)
+cens_cum_model = StanModel(file='models/tobit_students_cumulative.stan')
 cens_cum_model.diagnose()
 cens_cum_dict = censored_dict.copy()
 del cens_cum_dict['y_cens']
@@ -279,30 +174,7 @@ for t in range(T):
     
 # now this becomes difficult with splitting censored from uncensored :(
 # should maybe try the other approach with the normal_lccdf
-tobit_temporal = """
-data {
-    int<lower=0> T; // period t = 1,...,T
-    int<lower=0> K; // number of predictors
-    int<lower=0> N[T]; // uncensored vars per time
-    int<lower=0> N_cens[T]; // cens vars per time
-    vector[N[T]] y[T];  // arr of X for uncensored
-    matrix[N[T], K] X[T]; // arr of X for uncensored
-    matrix[N_cens[T], K] X_cens[T]; // arr of X for censored
-}
-parameters {
-    real beta_0;
-    vector[K] beta;
-    real<lower=0> sigma;
-    vector<lower=800>[N_cens[T]] y_cens[T];
-}
-model {
-    for (t in 1:T)
-      y[t] ~ normal(X[t] * beta + beta_0, sigma);
-    for (t in 1:T)
-      y_cens[t] ~ normal(X_cens[t] * beta + beta_0, sigma);
-}
-"""
-temp_model = StanModel(model_code=tobit_temporal)
+temp_model = StanModel(model_code='models/tobit_stud_temp_same_dim.stan')
 
 N_cens = 17
 T = len(year_list)
@@ -341,11 +213,11 @@ temp_res = temp_fit.extract()
 intercept_temp = temp_res['beta_0'][25001:].mean()
 beta_temp = temp_res['beta'][25001:].mean(axis=0)
 # good - as expected, the values are similar as before, but slightly lower because
-# the students have gotten more stupid
+# the students have gotten more dumb
 
 
 ##
-# some debuggin - unfortunately, I can't store matrices of different size in one
+# some debugging - unfortunately, I can't store matrices of different size in one
 # array in numpy and thereby also not in stan.
 ## 
 test = year_data[not_800][predictors]
@@ -397,52 +269,12 @@ for group_list in friend_groups:
                 ad_matrix[i,j] = 1
 
 # and some random friends
-for _ in range(1000):
+for _ in range(200):
     i = np.random.randint(0,200)
     j = np.random.randint(0,200)
     ad_matrix[i,j] = 1
     ad_matrix[j,i] = 1
     
-
-car_code = """
-data {
-    int<lower=1> N; // number of data items
-    int<lower=1> K; // number of predictors
-    matrix[N, K] X; // predictor matrix (uncensored)
-    vector<lower=0>[N] y;  // observed variables
-    int<lower=0> N_cens; // number of censored variables
-    matrix[N_cens, K] X_cens; // predictor matrix (censored)
-    real<lower=max(y)> U;
-    matrix<lower=0,upper=1>[N,N] W;
-}
-transformed data {
-    vector[N] zeros;
-    matrix<lower=0>[N,N] D;
-    {
-        vector[N] W_rowsums;
-        for (i in 1:N){
-            W_rowsums[i] = sum(W[i,]);
-        }
-        D = diag_matrix(W_rowsums);
-    }
-    zeros = rep_vector(0,N);
-}
-parameters {
-    real<lower=0> tau;
-    vector[N] phi;
-    real<lower=0, upper=1> alpha; // spatial dep gets a uniform [0,1] prior
-    real beta_zero;
-    vector[K] beta;
-    real<lower=0> sigma;
-    vector<lower=U>[N_cens] y_cens; // censored vars as sampled parameter
-}
-model {
-    phi ~ multi_normal_prec(zeros, tau * (D - alpha * W));
-    tau ~ gamma(2,2);
-    y ~ normal(X * beta + beta_zero + phi, sigma); // todo: this currently includes all values :(
-    y_cens ~ normal(X_cens * beta + beta_zero, sigma); // todo: I'm lacking phi here :(
-}
-"""
 # todo: 
 # - fuck, now I have the dimensionality problem with the censored vars again, but at
 #   a different point... using all for y and no phi for y_cens but I know it's wrong
@@ -452,17 +284,19 @@ model {
 #   is this handled by the multi_normal_prec???
 # https://mc-stan.org/docs/2_19/functions-reference/multivariate-normal-distribution-precision-parameterization.html
 # - find out what the CAR prior in car.normal is
-car_model = StanModel(model_code = car_code)
+car_model = StanModel(file='models/tobit_car_students.stan')
 car_dict = censored_dict.copy()
 car_dict['W'] = ad_matrix
 car_dict['U'] = 800
 car_fit = car_model.sampling(data=car_dict)
 car_res = car_fit.extract()
+# this is just so that I can look at the results without running the model again :)
 dump(car_res, 'data/car_result.joblib')
-can_load = load('data/car_result.joblib')
+# car_loaded = load('data/car_result.joblib')
+
 # getting many rejections - bad? Phi is a bit like a covariance matrix
 # -> only in the beginning, after 200 iterations all fine.
-# result from my run: chains have not mixed, might need to re-parametrize...
+# result from the run: chains have not mixed, might need to re-parametrize...
 
 
 

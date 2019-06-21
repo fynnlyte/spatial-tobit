@@ -4,6 +4,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from joblib import dump, load
 from urllib.request import urlretrieve
 
@@ -16,7 +17,7 @@ print(y.mean())
 
 # Example from „Kruschke: Doing Bayesian Data Analysis”
 # create the DSO (dynamic shared object)
-coin_model = StanModel(file='models/bernoulli_example.stan', model_name='coin')
+coin_model = StanModel(file=Path('models/bernoulli_example.stan').open())
 # generate some data
 N = 50;
 z = 10;
@@ -30,7 +31,7 @@ coin_test = coin_fit.extract()
 ##
 # 1st example from Stan User's Guide
 ##
-linear_model = StanModel(model_name='linear', file='models/linear_example.stan')
+linear_model = StanModel(file=Path('models/linear_example.stan').open())
 x = list(range(10))
 y = [1.1, 2.04, 3.07, 3.88, 4.95, 6.11, 7.03, 7.89, 8.91, 10]
 linear_data = {'x':x, 'y':y, 'N': 10}
@@ -43,7 +44,7 @@ linear_res = linear_fit.extract()
 # Tobit Model
 # according to https://www.r-bloggers.com/bayesian-models-with-censored-data-a-comparison-of-ols-tobit-and-bayesian-models/
 ##
-file_location = 'data/ucla_tobit_example.csv'
+file_location = Path('data/ucla_tobit_example.csv')
 try:
     tobit_data = pd.read_csv(file_location)
 except:
@@ -57,12 +58,14 @@ trans_progs = pd.DataFrame(ct.fit_transform(tobit_data), columns=coded_progs)
 tobit_data = pd.concat([tobit_data, trans_progs], axis=1)
 predictors = ['read', 'math', 'general', 'vocational']
 
-
+not_800 = tobit_data['apt'] != 800
+is_800 = tobit_data['apt'] == 800
+N_cens = is_800.sum()
 
 # 1) as comparison, do a linear model:
 tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': len(predictors),
                   'X': tobit_data[predictors]}
-tobit_linear_model = StanModel(file='models/linear_students.stan')
+tobit_linear_model = StanModel(file=Path('models/linear_students.stan'))
 tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict, iter=50000, chains=4)
 tob_lin_res = tob_lin_fit.extract()
 
@@ -82,10 +85,7 @@ beta = tob_lin_res['beta'][25001:].mean(axis=0)
 # and θ^m_{it} ~ normal(0, δ^2_m) is clearly made.
 
 # can I specify U directly or does it have to be included in data? -> both possible.
-censored_model = StanModel(file='models/tobit_students_explicit.stan')
-not_800 = tobit_data['apt'] != 800
-is_800 = tobit_data['apt'] == 800
-N_cens = is_800.sum()
+censored_model = StanModel(file=Path('models/tobit_students_explicit.stan').open())
 
 censored_dict_excluded = {'X': tobit_data[not_800][predictors], 
                           'N': tobit_data.shape[0] - N_cens, 
@@ -101,7 +101,7 @@ beta_2 = censored_res['beta'][25001:].mean(axis=0)
 # Intercept:  209.5488
 # mydata$read: 2.6980, mydata.math: 5.9148
 
-# if I include all original points and run the model:
+# if I include all original points and run the model specified before:
 # Intercept: 198.18
 # read: 2.72, math: 6.15
 censored_dict = {'X': tobit_data[predictors], 'N': tobit_data.shape[0], 
@@ -114,6 +114,15 @@ censored_dict = {'X': tobit_data[predictors], 'N': tobit_data.shape[0],
 # read: 2.69, math: 5.93
 ####
 
+# trying out if I can use a loop instead of two matrices s.t. it will work smoothly
+# with an adjacency matrix:
+censored_loop_model = StanModel(file=Path('models/tobit_students_ifelse.stan').open())
+censored_loop_fit = censored_loop_model.sampling(data=censored_dict, iter=50000, 
+                                                 chains=4)
+cens_loop_res = censored_loop_fit.extract()
+al_loop = cens_loop_res['alpha'][25001:].mean()
+beta_loop = cens_loop_res['beta'][25001:].mean(axis=0)
+# yay works. intercept: 208.6, read: 2.70, math: 5.93, gen: -12.75, voc: -46.6
 
 
 ####
@@ -123,7 +132,7 @@ censored_dict = {'X': tobit_data[predictors], 'N': tobit_data.shape[0],
 #   usually +/- 2
 # real normal_lccdf(reals y | reals mu, reals sigma)
 # - if the (y-mu)/sigma < -37.5 or > 8.25, the will be an over/ underflow
-cens_cum_model = StanModel(file='models/tobit_students_cumulative.stan')
+cens_cum_model = StanModel(file=Path('models/tobit_students_cumulative.stan').open())
 cens_cum_model.diagnose()
 cens_cum_dict = censored_dict.copy()
 del cens_cum_dict['y_cens']
@@ -174,7 +183,7 @@ for t in range(T):
     
 # now this becomes difficult with splitting censored from uncensored :(
 # should maybe try the other approach with the normal_lccdf
-temp_model = StanModel(model_code='models/tobit_stud_temp_same_dim.stan')
+temp_model = StanModel(file=Path('models/tobit_stud_temp_same_dim.stan').open())
 
 N_cens = 17
 T = len(year_list)
@@ -268,23 +277,21 @@ for group_list in friend_groups:
             if i!=j:
                 ad_matrix[i,j] = 1
 
-# and some random friends
-for _ in range(200):
+# and few some random friends. Observation: if I put the number too low, the model won't
+# start. Might need to ensure that every node is adjacent to at least one other and
+# that they are all connected (like the road segments)
+for _ in range(1000):
     i = np.random.randint(0,200)
     j = np.random.randint(0,200)
     ad_matrix[i,j] = 1
     ad_matrix[j,i] = 1
     
 # todo: 
-# - fuck, now I have the dimensionality problem with the censored vars again, but at
-#   a different point... using all for y and no phi for y_cens but I know it's wrong
-#   - or I somehow need the information about the indices and specify y[i] and y_cens[i]
-#     via for-loops and if/else for what to use :)
-# - In my model, phi is distributed around phi_bar
-#   is this handled by the multi_normal_prec???
+# - In the model of the researchers, phi is distributed around phi_bar
+#   is this handled by the multi_normal_prec??? Need to understand docs and adjust if not.
 # https://mc-stan.org/docs/2_19/functions-reference/multivariate-normal-distribution-precision-parameterization.html
 # - find out what the CAR prior in car.normal is
-car_model = StanModel(file='models/tobit_car_students.stan')
+car_model = StanModel(file=Path('models/tobit_car_students.stan').open())
 car_dict = censored_dict.copy()
 car_dict['W'] = ad_matrix
 car_dict['U'] = 800

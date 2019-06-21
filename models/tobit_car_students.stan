@@ -1,6 +1,4 @@
-// this model compiles, but does not give the desired results.
-// I need to verify that the matrix simplification for phi applies and need to define
-// the pdf of tobit model myself or pass the censored indices and work with if/else.
+// Need to verify that the matrix simplification for phi applies
 data {
     int<lower=1> N; // number of data items
     int<lower=1> K; // number of predictors
@@ -33,8 +31,15 @@ parameters {
     vector<lower=U>[N_cens] y_cens; // censored vars as sampled parameter
 }
 model {
+    int j = 1;
     phi ~ multi_normal_prec(zeros, tau * (D - alpha * W));
     tau ~ gamma(2,2);
-    y ~ normal(X * beta + beta_zero + phi, sigma); // todo: this currently includes all values :(
-    y_cens ~ normal(X_cens * beta + beta_zero, sigma); // todo: I'm lacking phi here :(
+    for (i in 1:N){
+        if(y[i] == 800){
+            y_cens[j] ~ normal(X[i] * beta + beta_zero + phi[i], sigma);
+            j += 1;
+        } else {
+            y[i] ~ normal(X[i] * beta + beta_zero + phi[i], sigma);
+        }
+    }
 }

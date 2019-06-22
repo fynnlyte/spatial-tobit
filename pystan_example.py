@@ -5,7 +5,6 @@ from sklearn.pipeline import Pipeline
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from urllib.request import urlretrieve
 
 model_code = 'parameters {real y;} model {y ~ normal(0,1);}'
 model = StanModel(model_code=model_code)
@@ -44,11 +43,7 @@ linear_res = linear_fit.extract()
 # according to https://www.r-bloggers.com/bayesian-models-with-censored-data-a-comparison-of-ols-tobit-and-bayesian-models/
 ##
 file_location = Path('data/ucla_tobit_example.csv')
-try:
-    tobit_data = pd.read_csv(file_location)
-except:
-    urlretrieve("https://stats.idre.ucla.edu/stat/data/tobit.csv", file_location)
-    tobit_data = pd.read_csv(file_location)
+tobit_data = pd.read_csv(file_location)
 # Stan does not support categorical features - need dummy variables.
 cat_trans = Pipeline(steps=[('onehot', OneHotEncoder())])
 ct = ColumnTransformer([('cat', cat_trans, ['prog'])])

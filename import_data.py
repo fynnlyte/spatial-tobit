@@ -2,17 +2,19 @@ import geopandas as gpd
 import pandas as pd
 import numpy as np
 import itertools
+from pathlib import Path
+
 
 #Use crash data to later infere crash counts
-mappedCrashData = gpd.read_file(r'data\NewYorkCrashes_Mapped.shp') 
+mappedCrashData = gpd.read_file(Path('data/NewYorkCrashes_Mapped.shp'))
 #Delete values with join_dist = -1 -> they are not mapped
 mappedCrashDataClean = mappedCrashData.loc[mappedCrashData['join_dist'] != -1]
 
 # Use to create adjaceny matrix
-adjacencyData = gpd.read_file(r'data\Adjacency.shp')
+adjacencyData = gpd.read_file(Path('data/Adjacency.shp'))
 
 #Map the crash counts to the segment data
-segmentData =  gpd.read_file(r'data\Segment_NewYork2017_Mapped.shp')
+segmentData =  gpd.read_file(Path('data/Segment_NewYork2017_Mapped.shp'))
 #segmentData['Segment_ID'] = segmentData['Segment_ID'].astype(int)
 #Remove unnecessary columns
 segmentData = segmentData.drop(columns=['Join_Count', 'TARGET_FID', 'FID_Segmen', 

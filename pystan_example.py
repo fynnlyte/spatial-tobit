@@ -1,10 +1,18 @@
 from pystan import StanModel
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, MaxAbsScaler
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from pathlib import Path
+from joblib import dump, load
+import arviz as az
+import networkx as nx
+
+
+plt.rcParams["figure.figsize"] = (16,12)
+plt.rcParams["font.size"] = 20
 
 model_code = 'parameters {real y;} model {y ~ normal(0,1);}'
 model = StanModel(model_code=model_code)
@@ -64,11 +72,11 @@ censored_dict = {'X': tobit_data[predictors], 'N': tobit_data.shape[0],
 tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': len(predictors),
                   'X': tobit_data[predictors]}
 tobit_linear_model = StanModel(file=Path('models/linear_students.stan').open())
-tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict, iter=50000, chains=4)
+tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict, iter=20000, chains=4)
 tob_lin_res = tob_lin_fit.extract()
 
-al = tob_lin_res['alpha'][25001:].mean()
-beta = tob_lin_res['beta'][25001:].mean(axis=0)
+al = tob_lin_res['alpha'][5001:].mean()
+beta = tob_lin_res['beta'][5001:].mean(axis=0)
 # getting similar values for read and math like in the example, cool!
 # intercept: 242.735; mydata$read: 2.553; mydata$math 5.383 
 # CAVEAT: verify the tobit_data that the columns are correctly encoded!
@@ -90,10 +98,10 @@ censored_dict_excluded = {'X': tobit_data[not_800][predictors],
                           'y': tobit_data[not_800]['apt'], 'N_cens': N_cens, 
                           'K': len(predictors), 'X_cens': tobit_data[is_800][predictors], 
                           'y_cens': tobit_data[is_800]['apt']}
-censored_fit = censored_model.sampling(data=censored_dict_excluded, iter=50000, chains=4)
+censored_fit = censored_model.sampling(data=censored_dict_excluded, iter=20000, chains=4)
 censored_res = censored_fit.extract()
-al_2 = censored_res['alpha'][25001:].mean()
-beta_2 = censored_res['beta'][25001:].mean(axis=0)
+al_2 = censored_res['alpha'][5001:].mean()
+beta_2 = censored_res['beta'][5001:].mean(axis=0)
 
 # nice - this looks quite close to the values from the tutorial:
 # Intercept:  209.5488
@@ -111,11 +119,14 @@ beta_2 = censored_res['beta'][25001:].mean(axis=0)
 # trying out if I can use a loop instead of two matrices s.t. it will work smoothly
 # with an adjacency matrix:
 censored_loop_model = StanModel(file=Path('models/tobit_students_ifelse.stan').open())
-censored_loop_fit = censored_loop_model.sampling(data=censored_dict, iter=50000, 
+censored_loop_fit = censored_loop_model.sampling(data=censored_dict, iter=20000, 
                                                  chains=4)
+az.plot_trace(censored_loop_fit)
+az.plot_energy(censored_loop_fit)
+
 cens_loop_res = censored_loop_fit.extract()
-al_loop = cens_loop_res['alpha'][25001:].mean()
-beta_loop = cens_loop_res['beta'][25001:].mean(axis=0)
+al_loop = cens_loop_res['alpha'][5001:].mean()
+beta_loop = cens_loop_res['beta'][5001:].mean(axis=0)
 # yay works. intercept: 208.6, read: 2.70, math: 5.93, gen: -12.75, voc: -46.6
 
 
@@ -133,10 +144,10 @@ del cens_cum_dict['y_cens']
 del cens_cum_dict['X_cens']
 cens_cum_dict['U'] = 800.0
 init_test = [{'alpha': 240, 'beta': [2.5, 5.4, -13, -48], 'sigma':50}] * 4
-cens_cum_fit = cens_cum_model.sampling(data=cens_cum_dict, iter=50000, chains=4, init=init_test)
+cens_cum_fit = cens_cum_model.sampling(data=cens_cum_dict, iter=20000, chains=4, init=init_test)
 cens_cum_res = cens_cum_fit.extract()
-al_3 = cens_cum_res['alpha'][40000:].mean()
-beta_3 = cens_cum_res['beta'][40000:].mean(axis=0)
+al_3 = cens_cum_res['alpha'][5001:].mean()
+beta_3 = cens_cum_res['beta'][5001:].mean(axis=0)
 # fails due to:
 #   Log probability evaluates to log(0), i.e. negative infinity.
 #   Stan can't start sampling from this initial value.
@@ -211,10 +222,10 @@ temp_dict = {'X': X_T, 'N': N_T, 'y': y_T, 'N_cens': N_cens_T, 'K': K, 'T': T,
 #    stuff. I need to be able to work on the whole dataset properly, can't just do
 #    the split. 
 
-temp_fit = temp_model.sampling(data=temp_dict, iter=50000, chains=4)
+temp_fit = temp_model.sampling(data=temp_dict, iter=20000, chains=4)
 temp_res = temp_fit.extract()
-intercept_temp = temp_res['beta_0'][25001:].mean()
-beta_temp = temp_res['beta'][25001:].mean(axis=0)
+intercept_temp = temp_res['beta_0'][5001:].mean()
+beta_temp = temp_res['beta'][5001:].mean(axis=0)
 # good - as expected, the values are similar as before, but slightly lower because
 # the students have gotten more dumb
 
@@ -269,7 +280,7 @@ for prog in coded_progs:
     for i in range(5):
         curr_group = []
         for j in range(int(i*curr_len/5), int((i+1)*curr_len/5)):
-            curr_group.append(sub_df.iloc[j]['id'] - 1) # 0 index in python, 1 index stan
+            curr_group.append(sub_df.iloc[j]['id'] - 1)
         friend_groups.append(curr_group)
 
 for group_list in friend_groups:
@@ -278,43 +289,112 @@ for group_list in friend_groups:
             if i!=j:
                 ad_matrix[i,j] = 1
 
-# and few some random friends. Observation: if I put the number too low, the model won't
-# start. Might need to ensure that every node is adjacent to at least one other and
-# that they are all connected (like the road segments)
-for _ in range(1000):
+# and few some random friends. Observation: need to ensure that all are connected
+# same applies to the road segments...
+num_friends = 0
+while num_friends < 50:
     i = np.random.randint(0,200)
     j = np.random.randint(0,200)
-    ad_matrix[i,j] = 1
-    ad_matrix[j,i] = 1
-    
-# todo: 
+    if i != j:
+        ad_matrix[i,j] = 1
+        ad_matrix[j,i] = 1
+        num_friends += 1
+ad_graph = nx.Graph(ad_matrix)
+if not nx.is_connected(ad_graph):
+    raise(Exception('ERR: Adjacency matrix not connected! try again.'))
+
 # - In the model of the researchers, phi is distributed around phi_bar
 #   is this handled by the multi_normal_prec??? Need to understand docs and adjust if not.
-# https://mc-stan.org/docs/2_19/functions-reference/multivariate-normal-distribution-precision-parameterization.html
+#     - seems to be legit. Documentation of WinBUGS does it in a similar way.
+#https://mc-stan.org/docs/2_19/functions-reference/multivariate-normal-distribution-precision-parameterization.html
 # - find out what the CAR prior in car.normal is. Right now I just have 2/-2 ...
+#   - Unfortunately, there is no information available. Just need to set something that works.
 car_model = StanModel(file=Path('models/tobit_car_students.stan').open())
 car_dict = censored_dict.copy()
 car_dict['W'] = ad_matrix
 car_dict['U'] = 800
-car_fit = car_model.sampling(data=car_dict)
-car_res = car_fit.extract()
-car_res['beta_zero'].mean()
-car_res['beta'].mean(axis=0)
+#car_fit = car_model.sampling(data=car_dict, iter=20000, warmup=4000, chains=4, max_treedepth=20)
+
+# this smaller run still took 45 mins to sample...
+# And still getting too low E-BFMI values
+car_fit2 = car_model.sampling(data=car_dict, iter=4000, warmup = 500, chains=4)
+dump(car_fit2, Path('data/car_students_4000.joblib'))
+
+az.plot_trace(car_fit2)
+
+car_res = car_fit2.extract()
+car_res['beta_zero'][501:].mean()
+car_res['beta'][501:].mean(axis=0)
 
 # getting many rejections - bad? Phi is a bit like a covariance matrix
 # -> only in the beginning, after 200 iterations all fine.
 # result from the run: chains have not mixed, might need to re-parametrize...
-
+# but let's try the same metric as in the paper:
+for res_dict in [cens_loop_res, car_res]:
+    print(pd.Series(res_dict['sigma'][10001:]).describe())
+# bad: compared with the previous tobit model, the parameters are nearly the same and
+# the sigma's std has not been reduced significantly
+# am I contraining the variables too much??? Need to center somehow?
 """
-WARNING:pystan:Rhat above 1.1 or below 0.9 indicates that the chains very likely have not mixed
-WARNING:pystan:1 of 4000 iterations saturated the maximum tree depth of 10 (0.025 %)
-WARNING:pystan:Run again with max_treedepth larger than 10 to avoid saturation
 WARNING:pystan:Chain 1: E-BFMI = 0.0426
 WARNING:pystan:Chain 2: E-BFMI = 0.0434
 WARNING:pystan:Chain 3: E-BFMI = 0.0431
 WARNING:pystan:Chain 4: E-BFMI = 0.0454
 WARNING:pystan:E-BFMI below 0.2 indicates you may need to reparameterize your model
 """
+    
+sparse_model = StanModel(file=Path('models/sparse_tobitcar_students.stan').open())
+tobit_data['ones'] = np.ones(tobit_data.shape[0])
+new_preds = ['ones'] + predictors
+sparse_dict = {'X': tobit_data[new_preds], 'n': tobit_data.shape[0], 
+               'y': tobit_data['apt'], 'n_cens': N_cens,
+               'p': len(new_preds), 'y_cens': tobit_data[is_800]['apt'],
+               'W': ad_matrix, 'U': 800, 'W_n': ad_matrix.sum()//2} # same as len(ad_graph.edges)
+sparse_fit = sparse_model.sampling(sparse_dict, iter=4000, warmup=500, chains=4)
+print(sparse_fit.stansummary())
+# higher values for read and math that with usual tobit model.
+# but: still the same  sigma and std(sigma) as before :/
+# it's weird, I'd expect more variance in the model explained by the spatial effects
+# is it due to no demeaning etc? 
+
+##
+# will try with values closer to 0 now.
+# sigma was  67.3  with stdev 3.74
+# even worse - E-BMFI is still small, but now also much treedepth saturation (OK)
+# and chain divergence (bad!)
+# would need to check energy-plots and what correlates...
+# TODO: if I scale, I have the danger of missing not hitting the condition for U...
+# -> should not be a problem if I have zeros there as lower bound
+trans = MaxAbsScaler().fit_transform(tobit_data[new_preds + ['apt']])
+data_centered = pd.DataFrame(trans, columns=new_preds + ['apt'])
+c_sparse_dict = {'X': data_centered[new_preds], 'n': tobit_data.shape[0], 
+                 'y': data_centered['apt'], 'n_cens': N_cens,
+                 'p': len(new_preds), 'y_cens': data_centered[is_800]['apt'],
+                 'W': ad_matrix, 'U': 1, 'W_n': ad_matrix.sum()//2} 
+c_sp_model = StanModel(file=Path('models/sparse_tobitcar_students.stan').open(), 
+                       verbose=False) # extra_compile_args=["-w"]
+c_params = {'adapt_delta': 0.90, 'max_treedepth':15}
+# no more saturation, but still divergence...
+c_sp_fit = c_sp_model.sampling(c_sparse_dict, iter=4000, warmup=500, control=c_params)
+c_sp_res = c_sp_fit.extract()
+print(c_sp_fit.stansummary())
+az.plot_trace(c_sp_fit, compact=True)
+az.plot_pair(c_sp_fit, ['tau', 'alpha', 'sigma'], divergences=True)
+# seems like I'm having a lot of divergences where:
+# - sigma below 0.0025
+# - alpha > 0.99 (would imply IAR)
+
+az.plot_energy(c_sp_fit)
+plt.scatter(c_sp_fit['lp__'], c_sp_fit['sigma'])
+dump(c_sp_fit, 'data/c_sp_4000.joblib')
+# sigma looks very correlated. But where do I get the energy from??
+
+
+# y_cens look ok though
+# tau quite large -> 23, close to the largest „friend_group“
+# larger phis now :) in negative and positive!
+
+
 
 
 

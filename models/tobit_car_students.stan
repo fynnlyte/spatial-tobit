@@ -32,7 +32,7 @@ parameters {
 model {
     int j = 1;
     phi ~ multi_normal_prec(zeros, tau * (D - alpha * W));
-    tau ~ gamma(2,2);
+    tau ~ gamma(2,2); // todo: do this like car.normal does
     for (i in 1:N){
         if(y[i] == 800){
             y_cens[j] ~ normal(X[i] * beta + beta_zero + phi[i], sigma);

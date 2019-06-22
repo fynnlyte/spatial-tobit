@@ -2,6 +2,7 @@ import geopandas as gpd
 import pandas as pd
 import numpy as np
 import itertools
+import networkx as nx
 from pathlib import Path
 
 
@@ -59,7 +60,7 @@ segmentData['CrashRate'] = crashRate
 ###############################################################################################################################
 #Create adjacency matrix
 n_segments = len(segmentData)
-adjacencyMatrix = np.zeros((n_segments, n_segments))
+adjacencyMatrix = np.zeros((n_segments, n_segments), dtype=int)
 intersection_list = adjacencyData["Intsec_ID"].unique().tolist()
 
 #Loop over all intersections
@@ -78,3 +79,30 @@ for i in range(len(intersection_list)):
         
 #######################################################################################################
 #Use segmentData and adjacencyMatrix
+        
+segmentDF = pd.DataFrame(segmentData)
+desc = segmentDF.describe()
+
+# first very simply approach: run tobit model on a fraction of the dataset with 
+# Three non-categorical vals as predictors (ok, Through_La technically is...)
+predictors = ['Length_m', 'AADT', 'Throug_La']
+
+# some verifications before using the data: 
+# - is the adjacency matrix symmetric? Necessary for generating a sparse
+#   representation of it.
+# - no ones on the diagonals?
+for i in range(n_segments):
+    for j in range(n_segments):
+        if i != j and adjacencyMatrix[i,j] != adjacencyMatrix[j,i]:
+            print('Error: from {} to {}: {}, but from {} to {}: {}'
+                  .format(i,j, adjacencyMatrix[i,j], j, i, adjacencyMatrix[j,i]))
+        elif i == j and adjacencyMatrix[i,j] != 0:
+            print('Error: encountered value {} in row/col {}'
+                  .format(adjacencyMatrix[i,i], i))
+# - is the adjacency graph connected or are there some weird segments?
+adj_graph = nx.Graph(adjacencyMatrix)
+if not nx.is_connected(adj_graph):
+    print('adj graph is not connected! need to remove nodes:')
+    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
+    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
+    print(isolated_nodes)

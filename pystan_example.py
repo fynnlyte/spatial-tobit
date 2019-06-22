@@ -63,7 +63,7 @@ censored_dict = {'X': tobit_data[predictors], 'N': tobit_data.shape[0],
 # 1) as comparison, do a linear model:
 tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': len(predictors),
                   'X': tobit_data[predictors]}
-tobit_linear_model = StanModel(file=Path('models/linear_students.stan'))
+tobit_linear_model = StanModel(file=Path('models/linear_students.stan').open())
 tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict, iter=50000, chains=4)
 tob_lin_res = tob_lin_fit.extract()
 

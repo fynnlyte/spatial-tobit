@@ -5,7 +5,6 @@ from sklearn.pipeline import Pipeline
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from joblib import dump, load
 from urllib.request import urlretrieve
 
 model_code = 'parameters {real y;} model {y ~ normal(0,1);}'
@@ -62,6 +61,10 @@ not_800 = tobit_data['apt'] != 800
 is_800 = tobit_data['apt'] == 800
 N_cens = is_800.sum()
 
+censored_dict = {'X': tobit_data[predictors], 'N': tobit_data.shape[0], 
+                 'y': tobit_data['apt'], 'N_cens': N_cens,
+                 'K': len(predictors), 'y_cens': tobit_data[is_800]['apt']}
+
 # 1) as comparison, do a linear model:
 tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': len(predictors),
                   'X': tobit_data[predictors]}
@@ -104,10 +107,6 @@ beta_2 = censored_res['beta'][25001:].mean(axis=0)
 # if I include all original points and run the model specified before:
 # Intercept: 198.18
 # read: 2.72, math: 6.15
-censored_dict = {'X': tobit_data[predictors], 'N': tobit_data.shape[0], 
-                 'y': tobit_data['apt'], 'N_cens': N_cens,
-                 'K': len(predictors), 'X_cens': tobit_data[is_800][predictors], 
-                 'y_cens': tobit_data[is_800]['apt']}
 
 # without them it's better. Need to filter the out the censored values!:
 # Intercept: 208.666
@@ -267,10 +266,17 @@ ad_matrix = np.zeros((200,200), dtype=int)
 
 # let's make it very obvious and put some of the best ones and some of the
 # worst ones into friends groups
-friend_groups = [[186, 168, 70, 24, 30, 91, 156, 61, 148, 194], [174, 133, 128, 9, 62],
-                 [39, 166, 114, 122, 86, 35, 154], [34,84,129,28,85], [6,25, 67,153, 187],
-                 [58,32,101,134,167,76,111], [10,47,54,77,190,198], [161, 43, 90, 152, 63, 97],
-                 [139,14,105,137,1,144,44,66], [149,147,116,140,82,36,65]]
+friend_groups = []
+for prog in coded_progs:
+    sub_df = tobit_data[tobit_data['prog']==prog].sort_values('apt')
+    curr_len = sub_df.shape[0]
+    # split into 5 friend groups by their grades
+    for i in range(5):
+        curr_group = []
+        for j in range(int(i*curr_len/5), int((i+1)*curr_len/5)):
+            curr_group.append(sub_df.iloc[j]['id'] - 1) # 0 index in python, 1 index stan
+        friend_groups.append(curr_group)
+
 for group_list in friend_groups:
     for i in group_list:
         for j in group_list:
@@ -290,23 +296,30 @@ for _ in range(1000):
 # - In the model of the researchers, phi is distributed around phi_bar
 #   is this handled by the multi_normal_prec??? Need to understand docs and adjust if not.
 # https://mc-stan.org/docs/2_19/functions-reference/multivariate-normal-distribution-precision-parameterization.html
-# - find out what the CAR prior in car.normal is
+# - find out what the CAR prior in car.normal is. Right now I just have 2/-2 ...
 car_model = StanModel(file=Path('models/tobit_car_students.stan').open())
 car_dict = censored_dict.copy()
 car_dict['W'] = ad_matrix
 car_dict['U'] = 800
 car_fit = car_model.sampling(data=car_dict)
 car_res = car_fit.extract()
-# this is just so that I can look at the results without running the model again :)
-dump(car_res, 'data/car_result.joblib')
-# car_loaded = load('data/car_result.joblib')
+car_res['beta_zero'].mean()
+car_res['beta'].mean(axis=0)
 
 # getting many rejections - bad? Phi is a bit like a covariance matrix
 # -> only in the beginning, after 200 iterations all fine.
 # result from the run: chains have not mixed, might need to re-parametrize...
 
-
-
+"""
+WARNING:pystan:Rhat above 1.1 or below 0.9 indicates that the chains very likely have not mixed
+WARNING:pystan:1 of 4000 iterations saturated the maximum tree depth of 10 (0.025 %)
+WARNING:pystan:Run again with max_treedepth larger than 10 to avoid saturation
+WARNING:pystan:Chain 1: E-BFMI = 0.0426
+WARNING:pystan:Chain 2: E-BFMI = 0.0434
+WARNING:pystan:Chain 3: E-BFMI = 0.0431
+WARNING:pystan:Chain 4: E-BFMI = 0.0454
+WARNING:pystan:E-BFMI below 0.2 indicates you may need to reparameterize your model
+"""
 
 
 

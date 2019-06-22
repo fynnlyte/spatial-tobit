@@ -3,9 +3,8 @@ data {
     int<lower=1> N; // number of data items
     int<lower=1> K; // number of predictors
     matrix[N, K] X; // predictor matrix (uncensored)
-    vector<lower=0>[N] y;  // observed variables
+    vector<lower=0>[N] y;  // all observed variables
     int<lower=0> N_cens; // number of censored variables
-    matrix[N_cens, K] X_cens; // predictor matrix (censored)
     real<lower=max(y)> U;
     matrix<lower=0,upper=1>[N,N] W;
 }

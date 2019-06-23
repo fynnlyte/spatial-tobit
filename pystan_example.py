@@ -9,6 +9,8 @@ from pathlib import Path
 from joblib import dump, load
 import arviz as az
 import networkx as nx
+import seaborn as sns
+sns.set(style='ticks', color_codes=True)
 
 
 plt.rcParams["figure.figsize"] = (16,12)
@@ -352,6 +354,8 @@ sparse_dict = {'X': tobit_data[new_preds], 'n': tobit_data.shape[0],
                'W': ad_matrix, 'U': 800, 'W_n': ad_matrix.sum()//2} # same as len(ad_graph.edges)
 sparse_fit = sparse_model.sampling(sparse_dict, iter=4000, warmup=500, chains=4)
 print(sparse_fit.stansummary())
+sparse_data = sparse_fit.extract()
+az.plot_pair(sparse_data, ['tau', 'sigma', 'alpha'])
 # higher values for read and math that with usual tobit model.
 # but: still the same  sigma and std(sigma) as before :/
 # it's weird, I'd expect more variance in the model explained by the spatial effects
@@ -372,23 +376,33 @@ c_sparse_dict = {'X': data_centered[new_preds], 'n': tobit_data.shape[0],
                  'p': len(new_preds), 'y_cens': data_centered[is_800]['apt'],
                  'W': ad_matrix, 'U': 1, 'W_n': ad_matrix.sum()//2} 
 c_sp_model = StanModel(file=Path('models/sparse_tobitcar_students.stan').open(), 
-                       verbose=False) # extra_compile_args=["-w"]
-c_params = {'adapt_delta': 0.90, 'max_treedepth':15}
+                       verbose=False, extra_compile_args=["-w"])
+c_params = {'adapt_delta': 0.95, 'max_treedepth':12}
 # no more saturation, but still divergence...
+# trying to constrain the model: α <= 0.99 instead <=1, σ >= 0.001
 c_sp_fit = c_sp_model.sampling(c_sparse_dict, iter=4000, warmup=500, control=c_params)
 c_sp_res = c_sp_fit.extract()
 print(c_sp_fit.stansummary())
+
 az.plot_trace(c_sp_fit, compact=True)
 az.plot_pair(c_sp_fit, ['tau', 'alpha', 'sigma'], divergences=True)
 # seems like I'm having a lot of divergences where:
 # - sigma below 0.0025
 # - alpha > 0.99 (would imply IAR)
+# -> constraining helped a bit. But having region _around_ sigma = 0.08 and 0.04
 
 az.plot_energy(c_sp_fit)
 plt.scatter(c_sp_fit['lp__'], c_sp_fit['sigma'])
 dump(c_sp_fit, 'data/c_sp_4000.joblib')
-# sigma looks very correlated. But where do I get the energy from??
+# sigma looks very correlated.
 
+simpler_csp = c_sp_res.copy()
+del simpler_csp['phi']
+del simpler_csp['y_cens']
+del simpler_csp['beta']
+c_sp_df = pd.DataFrame.from_dict(simpler_csp)
+sns.pairplot(c_sp_df)
+# indeed, the other vars seem OK but sigma looks directly correlated to the lp
 
 # y_cens look ok though
 # tau quite large -> 23, close to the largest „friend_group“

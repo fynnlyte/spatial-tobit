@@ -106,3 +106,31 @@ if not nx.is_connected(adj_graph):
     conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
     isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
     print(isolated_nodes)
+
+########################################################################################################################
+# Calculate Moran's I
+
+print('data:', segmentData)
+print('adj:', adjacencyMatrix)
+print(len(adjacencyMatrix), len(adjacencyMatrix[1]))
+print(adjacencyMatrix[0][2])
+print(adjacencyMatrix[19])
+print(segmentData['CrashRate'])
+
+print(len(segmentData))
+
+def morans_i(number_road_segments, adjacencyMatrix, crash_rates):
+    global_avg_crash_rate = crash_rates.mean()
+    numerator = 0
+    sum_adjacency_weights = 0
+    denominator = 0
+    for i in range(number_road_segments):
+        for j in range(number_road_segments):
+            numerator += adjacencyMatrix[i][j] *\
+                         (crash_rates[i] - global_avg_crash_rate) *\
+                         (crash_rates[j] - global_avg_crash_rate)
+            sum_adjacency_weights += adjacencyMatrix[i][j]
+        denominator += np.square(crash_rates[i] - global_avg_crash_rate)
+    return (number_road_segments * numerator) / (sum_adjacency_weights * denominator)
+
+print(morans_i(len(segmentData), adjacencyMatrix, segmentData['CrashRate']))

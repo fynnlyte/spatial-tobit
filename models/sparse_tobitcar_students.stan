@@ -75,12 +75,13 @@ parameters {
   vector[p] beta;
   vector[n] phi;
   real<lower = 0> tau; 
-  real<lower = 0, upper = 1> alpha; // spatial dependence
-  real<lower = 0> sigma;
+  real<lower = 0, upper = 0.99> alpha; // spatial dependence
+  real<lower = 0.001> sigma;
   real<lower = U> y_cens[n_cens];// todo: change to upper for crash rate
 }
 model {
   int j = 1;
+  sigma ~ gamma(0.001, 0.001);
   tau ~ gamma(2, 2); // todo - this is from CARstan, but might need something else...
   phi ~ sparse_car(tau, alpha, W_sparse, D_sparse, lambda, n, W_n);
   beta ~ normal(0, 2); // todo: ~ normal(0, 10000) was used in paper, but this suits to the params.

@@ -44,7 +44,7 @@ data {
   real<lower=0,upper = min(y_obs)> U; // censoring point, accounting for rounding errors.
   matrix[n, p] X; // predictor matrix (full)
   matrix<lower = 0, upper = 1>[n, n] W; // adjacency matrix
-  int<lower = 0, upper= n*n> W_n; // number of adjacent region pairs (i.e. edges in graph)
+  int<lower = n, upper= n*n> W_n; // number of adjacent region pairs (i.e. edges in graph)
 }
 transformed data {
   int W_sparse[W_n, 2];   // adjacency pairs

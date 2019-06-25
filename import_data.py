@@ -82,6 +82,8 @@ for i in range(len(intersection_list)):
         
 #######################################################################################################
 #Use segmentData and adjacencyMatrix
+# Matrix needs to be cleaned up before model can be used :(
+# - May not contain any vertices without neighbors!
         
 segmentDF = pd.DataFrame(segmentData)
 desc = segmentDF.describe()
@@ -103,18 +105,28 @@ for i in range(n_segments):
             print('Error: encountered value {} in row/col {}'
                   .format(adjacencyMatrix[i,i], i))
 # - is the adjacency graph connected or are there some weird segments?
-adj_graph = nx.Graph(adjacencyMatrix)
-if not nx.is_connected(adj_graph):
-    print('adj graph is not connected! need to remove nodes:')
-    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
-    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
-    print(isolated_nodes)
-    
+empty_row_count = adjacencyMatrix.sum(axis=0) == 0).sum()
+if empty_row_count > 0:
+    print('adj matrix has %s rows/cols without any edge.' % empty_row_count)
+
+#adj_graph = nx.Graph(adjacencyMatrix)
+#if not nx.is_connected(adj_graph):
+#    print('Need to remove nodes:')
+#    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
+#    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
+#    print(isolated_nodes)
+
 # segment ids and also rows/ cols in adjacency-matrix are 0-indexed!!!
-# index still as before if not doing reset_index(); same for node labels.
-filtered_df = segmentDF.drop(labels=isolated_nodes).reset_index()
+# WTF - there is one entry with one!! That may not happen.
+(adjacencyMatrix.sum(axis=1) == 1).sum()
+(adjacencyMatrix.sum(axis=0) == 1).sum()
+filtered_df = segmentDF[adjacencyMatrix.sum(axis=0) > 0].reset_index()
 n_filt = filtered_df.shape[0]
 filtered_matrix = np.zeros((n_filt, n_filt), dtype=int)
+segmentID_to_index = dict()
+for i, s_id in filtered_df[['Segment_ID']].itertuples(index=True):
+    segmentID_to_index[int(s_id)] = i
+
 for i in range(n_filt):
     isec_id = int(filtered_df.iloc[i]['Segment_ID'])
     intersec = intersection_list[isec_id]
@@ -126,13 +138,32 @@ for i in range(n_filt):
     for j in range(len(combineSegments)):
         tup = combineSegments[j]
         #print(tup)
-        s = int(tup[0])
-        d = int(tup[1])
-        if s not in isolated_nodes and d not in isolated_nodes:
-            adjacencyMatrix[s,d] = 1
+        s_id = int(tup[0])
+        d_id = int(tup[1])
+        if s_id in segmentID_to_index and d_id in segmentID_to_index:
+            s = segmentID_to_index[s_id]
+            d = segmentID_to_index[d_id]
+            if s in isolated_nodes or d in isolated_nodes:
+                print('Skipping isolated: %s - %d' % (s,d))
+            else:
+                filtered_matrix[s,d] = 1
+        else:
+            print('skipping edge: %s - %d' % (s_id, d_id))
+           
+print('how many zero rows in my matrix? %s. WTF??' % (filtered_matrix.sum(axis=0) == 0).sum())
+
+#filtered_graph = nx.Graph(filtered_matrix)
+#if not nx.is_connected(filtered_graph):
+#    print('adj graph is not connected! need to remove nodes:')
+#    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
+#    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
+#    print(isolated_nodes)
+
+
+###
+# model begins here
+###
 filtered_df['ones'] = np.ones(filtered_df.shape[0])
-
-
 tobit_model = StanModel(file=Path('models/crash_tobit.stan').open(),
                         extra_compile_args=["-w"])
 car_model = StanModel(file=Path('models/crash_CAR.stan').open(),
@@ -160,8 +191,9 @@ with open('data/crash_tobit.log', 'w') as t_log:
 car_dict = tobit_dict.copy()
 car_dict['W'] = filtered_matrix
 car_dict['W_n'] = filtered_matrix.sum()//2
+car_dict['n'] = data_centered.shape[0]
 car_fit = car_model.sampling(data=car_dict, iter=4000, warmup=500)
-print(car_fit.stansummary())
+car_info = car_fit.stansummary()
 dump(car_fit, 'data/car_tobit.joblib')
 with open('data/crash_tobit.log', 'w') as c_log:
     c_log.write(car_info)

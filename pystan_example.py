@@ -444,9 +444,15 @@ def scaled_spare_car(tobit_data: pd.DataFrame, ad_matrix):
     trans = MaxAbsScaler().fit_transform(tobit_data[new_preds + ['apt']])
     data_centered = pd.DataFrame(trans, columns=new_preds + ['apt'])
     is_800 = tobit_data['apt'] == 800
+    not_800 = tobit_data['apt'] != 800
+    ii_obs = tobit_data[not_800]['id']
+    ii_cens = tobit_data[is_800]['id']
+    # After using vectorisation: Gradient takes 0.0003  seconds.
     c_sparse_dict = {'X': data_centered[new_preds], 'n': tobit_data.shape[0], 
-                     'y': data_centered['apt'], 'n_cens': is_800.sum(),
-                     'p': len(new_preds), 'y_cens': data_centered[is_800]['apt'],
+                     'n_obs': not_800.sum(), 'n_cens': is_800.sum(), 
+                     'y_obs': data_centered[not_800]['apt'], 'ii_obs': ii_obs, 
+                     'ii_cens': ii_cens, 'p': len(new_preds), 
+                     'y_cens': data_centered[is_800]['apt'],
                      'W': ad_matrix, 'U': 1, 'W_n': ad_matrix.sum()//2} 
     c_sp_model = StanModel(file=Path('models/sparse_tobitcar_students.stan').open(), 
                            verbose=False, extra_compile_args=["-w"])
@@ -464,6 +470,7 @@ def scaled_spare_car(tobit_data: pd.DataFrame, ad_matrix):
     del simpler_csp['phi']
     del simpler_csp['y_cens']
     del simpler_csp['beta']
+    del simpler_csp['y']
     c_sp_df = pd.DataFrame.from_dict(simpler_csp)
     sns.pairplot(c_sp_df)
     return c_sp_fit, c_sp_model
@@ -473,14 +480,14 @@ def __main__():
     tobit_data = prepare_tobit_data()
     ad_matrix = get_students_adjacency(tobit_data)
     # here, try any of the models defined before.
-    # fit, model = scaled_spare_car(tobit_data, ad_matrix)
+    fit, model = scaled_spare_car(tobit_data, ad_matrix)
     # y_cens look ok though
     # tau quite large -> 23, close to the largest „friend_group“
     # larger phis now :) in negative and positive!
     
     # investigate: can I use the normal_l(c)cdf function?
     # fit, model = tobit_simple_model(tobit_data, scaled=True)
-    fit, model = tobit_cum_sum_scaled(tobit_data)
+    # fit, model = tobit_cum_sum_scaled(tobit_data)
     
     az.plot_trace(fit, compact=True)
     az.plot_pair(fit, ['tau', 'alpha', 'sigma'], divergences=True)

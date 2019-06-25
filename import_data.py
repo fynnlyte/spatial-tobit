@@ -4,6 +4,9 @@ import numpy as np
 import itertools
 import networkx as nx
 from pathlib import Path
+from pystan import StanModel
+from sklearn.preprocessing import MaxAbsScaler
+from joblib import dump
 
 
 #Use crash data to later infere crash counts
@@ -85,7 +88,7 @@ desc = segmentDF.describe()
 
 # first very simply approach: run tobit model on a fraction of the dataset with 
 # Three non-categorical vals as predictors (ok, Through_La technically is...)
-predictors = ['Length_m', 'AADT', 'Throug_La']
+predictors = ['ones', 'Length_m', 'AADT', 'Through_La']
 
 # some verifications before using the data: 
 # - is the adjacency matrix symmetric? Necessary for generating a sparse
@@ -106,3 +109,59 @@ if not nx.is_connected(adj_graph):
     conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
     isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
     print(isolated_nodes)
+    
+# segment ids and also rows/ cols in adjacency-matrix are 0-indexed!!!
+# index still as before if not doing reset_index(); same for node labels.
+filtered_df = segmentDF.drop(labels=isolated_nodes).reset_index()
+n_filt = filtered_df.shape[0]
+filtered_matrix = np.zeros((n_filt, n_filt), dtype=int)
+for i in range(n_filt):
+    isec_id = int(filtered_df.iloc[i]['Segment_ID'])
+    intersec = intersection_list[isec_id]
+
+    connectedSegments = adjacencyData.loc[adjacencyData['Intsec_ID'] == intersec]["Segment_ID"].tolist()   
+    #Combine all segments to tuples
+    combineSegments = list(itertools.permutations(connectedSegments, 2))
+    #Loop over all tuples and set to 1 (connection between these to segments)   
+    for j in range(len(combineSegments)):
+        tup = combineSegments[j]
+        #print(tup)
+        s = int(tup[0])
+        d = int(tup[1])
+        if s not in isolated_nodes and d not in isolated_nodes:
+            adjacencyMatrix[s,d] = 1
+filtered_df['ones'] = np.ones(filtered_df.shape[0])
+
+
+tobit_model = StanModel(file=Path('models/crash_tobit.stan').open(),
+                        extra_compile_args=["-w"])
+car_model = StanModel(file=Path('models/crash_CAR.stan').open(),
+                      extra_compile_args=["-w"])
+
+trans = MaxAbsScaler().fit_transform(filtered_df[predictors + ['CrashRate']])
+data_centered = pd.DataFrame(trans, columns=predictors + ['CrashRate'])
+threshold = 0.0000000001
+is_cens = data_centered['CrashRate'] < threshold
+not_cens = data_centered['CrashRate'] >= threshold
+ii_obs = filtered_df[not_cens].index + 1
+ii_cens = filtered_df[is_cens].index + 1
+tobit_dict = {'n_obs': not_cens.sum(), 'n_cens': is_cens.sum(), 'p': len(predictors),
+              'ii_obs': ii_obs, 'ii_cens': ii_cens, 
+              'y_obs': filtered_df[not_cens]['CrashRate'], 'U': threshold,
+              'X': filtered_df[predictors]}
+tobit_fit = tobit_model.sampling(data=tobit_dict, iter=4000, warmup=500)
+tobit_info = tobit_fit.stansummary()
+print(tobit_fit.stansummary())
+dump(tobit_fit, 'data/crash_tobit.joblib')
+with open('data/crash_tobit.log', 'w') as t_log:
+    t_log.write(tobit_info)
+
+
+car_dict = tobit_dict.copy()
+car_dict['W'] = filtered_matrix
+car_dict['W_n'] = filtered_matrix.sum()//2
+car_fit = car_model.sampling(data=car_dict, iter=4000, warmup=500)
+print(car_fit.stansummary())
+dump(car_fit, 'data/car_tobit.joblib')
+with open('data/crash_tobit.log', 'w') as c_log:
+    c_log.write(car_info)

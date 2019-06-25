@@ -34,14 +34,17 @@ functions {
   }
 }
 data {
-  int<lower = 1> n;
+  int<lower=0> n_obs; // number of uncensored rows
+  int<lower=0> n_cens; // number of censored rows
+  int<lower=n_obs+n_cens, upper=n_obs+n_cens > n; 
   int<lower = 1> p; // number of predictors + 1 for the intercept
+  int<lower=1, upper = n> ii_obs[n_obs]; // indices of observed
+  int<lower=1, upper = n> ii_cens[n_cens]; // indices of censored
   matrix[n, p] X; // full predictor matrix, including a row of ones for the intercept
-  real<lower = 0> y[n]; // real for scaled, else int
+  vector[n_obs] y_obs;  // all uncensored variables
   matrix<lower = 0, upper = 1>[n, n] W; // adjacency matrix
   int<lower = 0, upper= n*n> W_n; // number of adjacent region pairs (i.e. edges in graph)
-  int<lower = 0> n_cens;
-  real<lower = max(y)> U; // todo: change to upper and min for crash rate
+  real<lower = max(y_obs)> U; // todo: change to upper and min for crash rate
 }
 transformed data {
   int W_sparse[W_n, 2];   // adjacency pairs
@@ -77,7 +80,12 @@ parameters {
   real<lower = 0> tau; 
   real<lower = 0, upper = 0.99> alpha; // spatial dependence
   real<lower = 0.001> sigma;
-  real<lower = U> y_cens[n_cens];// todo: change to upper for crash rate
+  vector<lower = U>[n_cens]  y_cens;// todo: change to upper for crash rate
+}
+transformed parameters {
+    vector[n] y;
+    y[ii_obs] = y_obs;
+    y[ii_cens] = y_cens;
 }
 model {
   int j = 1;
@@ -85,12 +93,5 @@ model {
   tau ~ gamma(2, 2); // todo - this is from CARstan, but might need something else...
   phi ~ sparse_car(tau, alpha, W_sparse, D_sparse, lambda, n, W_n);
   beta ~ normal(0, 2); // todo: ~ normal(0, 10000) was used in paper, but this suits to the params.
-  for (i in 1:n){
-    if(y[i] == U){
-      y_cens[j] ~ normal(X[i] * beta + phi[i], sigma);
-      j += 1;
-    } else {
-      y[i] ~ normal(X[i] * beta + phi[i], sigma);
-    }
-  }
+  y ~ normal(X * beta + phi, sigma);
 }

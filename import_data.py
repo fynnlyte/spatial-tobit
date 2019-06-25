@@ -4,7 +4,7 @@ import numpy as np
 import itertools
 import networkx as nx
 from pathlib import Path
-from pystan import StanModel
+from pystan import StanModel, check_hmc_diagnostics
 from sklearn.preprocessing import MaxAbsScaler
 from joblib import dump
 
@@ -105,16 +105,17 @@ for i in range(n_segments):
             print('Error: encountered value {} in row/col {}'
                   .format(adjacencyMatrix[i,i], i))
 # - is the adjacency graph connected or are there some weird segments?
-empty_row_count = adjacencyMatrix.sum(axis=0) == 0).sum()
+empty_row_count = (adjacencyMatrix.sum(axis=0) == 0).sum()
 if empty_row_count > 0:
     print('adj matrix has %s rows/cols without any edge.' % empty_row_count)
 
-#adj_graph = nx.Graph(adjacencyMatrix)
-#if not nx.is_connected(adj_graph):
-#    print('Need to remove nodes:')
-#    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
-#    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
-#    print(isolated_nodes)
+"""
+adj_graph = nx.Graph(adjacencyMatrix)
+if not nx.is_connected(adj_graph):
+    print('Need to remove nodes:')
+    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
+    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
+    print(isolated_nodes)
 
 # segment ids and also rows/ cols in adjacency-matrix are 0-indexed!!!
 # WTF - there is one entry with one!! That may not happen.
@@ -152,17 +153,14 @@ for i in range(n_filt):
            
 print('how many zero rows in my matrix? %s. WTF??' % (filtered_matrix.sum(axis=0) == 0).sum())
 
-#filtered_graph = nx.Graph(filtered_matrix)
-#if not nx.is_connected(filtered_graph):
-#    print('adj graph is not connected! need to remove nodes:')
-#    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
-#    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
-#    print(isolated_nodes)
+"""
 
 
 ###
 # model begins here
 ###
+filtered_df = segmentDF
+filtered_matrix = adjacencyMatrix
 filtered_df['ones'] = np.ones(filtered_df.shape[0])
 tobit_model = StanModel(file=Path('models/crash_tobit.stan').open(),
                         extra_compile_args=["-w"])
@@ -182,18 +180,17 @@ tobit_dict = {'n_obs': not_cens.sum(), 'n_cens': is_cens.sum(), 'p': len(predict
               'X': filtered_df[predictors]}
 tobit_fit = tobit_model.sampling(data=tobit_dict, iter=4000, warmup=500)
 tobit_info = tobit_fit.stansummary()
-print(tobit_fit.stansummary())
 dump(tobit_fit, 'data/crash_tobit.joblib')
 with open('data/crash_tobit.log', 'w') as t_log:
     t_log.write(tobit_info)
 
-
+c_params = {'adapt_delta': 0.8, 'max_treedepth': 20}
 car_dict = tobit_dict.copy()
 car_dict['W'] = filtered_matrix
 car_dict['W_n'] = filtered_matrix.sum()//2
 car_dict['n'] = data_centered.shape[0]
-car_fit = car_model.sampling(data=car_dict, iter=4000, warmup=500)
+car_fit = car_model.sampling(data=car_dict, iter=1000, warmup=500, control=c_params)
 car_info = car_fit.stansummary()
 dump(car_fit, 'data/car_tobit.joblib')
-with open('data/crash_tobit.log', 'w') as c_log:
+with open('data/crash_car.log', 'w') as c_log:
     c_log.write(car_info)

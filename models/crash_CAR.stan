@@ -87,7 +87,6 @@ transformed parameters {
     y[ii_cens] = y_cens;
 }
 model {
-  int j = 1;
   sigma ~ gamma(0.001, 0.001); // todo: these vals were for 1/σ^2. 
   tau ~ gamma(2, 2); // todo - this is from CARstan, but might need something else...
   phi ~ sparse_car(tau, alpha, W_sparse, D_sparse, lambda, n, W_n);

@@ -105,6 +105,7 @@ for i in range(n_segments):
             print('Error: encountered value {} in row/col {}'
                   .format(adjacencyMatrix[i,i], i))
 # - is the adjacency graph connected or are there some weird segments?
+<<<<<<< HEAD
 empty_row_count = adjacencyMatrix.sum(axis=0) == 0).sum()
 if empty_row_count > 0:
     print('adj matrix has %s rows/cols without any edge.' % empty_row_count)
@@ -197,3 +198,16 @@ car_info = car_fit.stansummary()
 dump(car_fit, 'data/car_tobit.joblib')
 with open('data/crash_tobit.log', 'w') as c_log:
     c_log.write(car_info)
+=======
+adj_graph = nx.Graph(adjacencyMatrix)
+if not nx.is_connected(adj_graph):
+    print('adj graph is not connected! need to remove nodes:')
+    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
+    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
+    print(isolated_nodes)
+    
+    
+#Check of the isolated nodes
+#Isolated nodes are road segment thats are not correctly connected in the traffic shape files. We can remove them since they are not too much
+    
+>>>>>>> f0b158d6ad917ea1db229c1470ed482aa01776f6

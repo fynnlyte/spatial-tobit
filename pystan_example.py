@@ -156,6 +156,59 @@ def tobit_ifelse_model(tobit_data: pd.DataFrame):
     # yay works. intercept: 208.6, read: 2.70, math: 5.93, gen: -12.75, voc: -46.6
     return censored_loop_fit, censored_loop_model
 
+def tobit_vectorised(tobit_data: pd.DataFrame, scaled: bool = False):
+    """
+    vectorised version of the tobit model that combines the parameters for the censored
+    values with the uncensored values into a transformed y for more efficiency.
+    """
+    vec_model = StanModel(file=Path('models/tobit_students_vectorised.stan').open(),
+                               extra_compile_args=["-w"])
+    not_800 = tobit_data['apt'] != 800
+    is_800 = tobit_data['apt'] == 800
+    ii_obs = tobit_data[not_800]['id']
+    ii_cens = tobit_data[is_800]['id']
+    if not scaled:
+        vec_dict = {'X': tobit_data[new_preds], 'n_obs': not_800.sum(), 
+                    'n_cens': is_800.sum(), 'U': 800,
+                    'y_obs': tobit_data[not_800]['apt'], 'p': len(new_preds), 
+                    'ii_obs': ii_obs, 'ii_cens': ii_cens}
+    else:
+        trans = MaxAbsScaler().fit_transform(tobit_data[new_preds + ['apt']])
+        data_centered = pd.DataFrame(trans, columns=new_preds + ['apt'])
+        vec_dict = {'X': data_centered[new_preds], 'n_obs': not_800.sum(), 
+                    'n_cens': is_800.sum(), 'U': 800,
+                    'y_obs': data_centered[not_800]['apt'], 'p': len(new_preds), 
+                    'ii_obs': ii_obs, 'ii_cens': ii_cens, 'X_cens': data_centered[is_800][new_preds]}
+
+    vec_fit = vec_model.sampling(data=vec_dict, iter=10000, chains=4, 
+                                           warmup=2000, control=c_params)
+    print('β: {}'.format(vec_fit['beta'][501:].mean(axis=0)))
+    print(vec_fit.stansummary())
+    # website:  β: [209.5488,      2.6980,      5.9148,    -12.7145,    -46.1431]
+    # expected: β: [208.87713433   2.7046745    5.91765089 -12.388193   -45.92047109]
+    # ignoring the lhs warning:
+    # β: [208.05528958   2.69993771   5.93966351 -12.5479601  -45.75064593]
+    # β: [208.47512508   2.6983033    5.93729938 -12.73595247 -46.17020513]
+    # β: [208.00374372   2.68788628   5.95236835 -12.62635424 -45.91977168]
+    # with n= 10000:
+    # Gradient evaluation took 8 e-05  seconds
+    # β: [208.55708413   2.70249452   5.93190482 -12.87481702 -46.21411045]
+    # β: [208.50293045   2.70678501   5.92760618 -12.68745327 -46.11553276]
+    # looks OK to me...
+    # adding the target += like in docs for censored data 
+    # -> works neither with scaled nor with unscaled. Really seems to be OK.
+    
+    # using target += normal_lpdf(y| X * beta, sigma):
+    # gradient eval ~ 6.4 - 6.8 e-05 secs
+    # completely equivalent, but does not display the warning.
+    # β: [207.53523695   2.69524709   5.96005247 -13.08223192 -46.00076967]
+    # β: [208.68984203   2.7037005    5.9266084  -12.64173345 -45.95678012]
+    # β: [208.35655102   2.70051036   5.93408925 -12.48927206 -45.88677641]
+    # β: [208.43953925   2.69778126   5.93907365 -12.77548681 -46.14267259]
+    return vec_fit, vec_model
+    
+
+
 def tobit_cum_sum_scaled(tobit_data: pd.DataFrame):
     """
     Let's now try with the cumulative distribution function. This would be more elegant
@@ -169,28 +222,36 @@ def tobit_cum_sum_scaled(tobit_data: pd.DataFrame):
     trans = MaxAbsScaler().fit_transform(tobit_data[new_preds + ['apt']])
     data_centered = pd.DataFrame(trans, columns=new_preds + ['apt'])
     is_800 = tobit_data['apt'] == 800
+    not_800 = tobit_data['apt'] != 800
     cens_cum_model = StanModel(file=Path('models/tobit_students_cumulative.stan').open(),
                                extra_compile_args=["-w"])
-    cens_cum_dict = {'X': data_centered[new_preds], 'n': tobit_data.shape[0], 
-                     'y': data_centered['apt'], 'n_cens': is_800.sum(),
-                     'p': len(new_preds), 'y_cens': data_centered[is_800]['apt'],
-                     'U': 1} 
+    cens_cum_dict = {'X': data_centered[not_800][new_preds], 
+                    'n': tobit_data.shape[0] - is_800.sum(), 
+                    'y': data_centered[not_800]['apt'], 'n_cens': is_800.sum(),
+                    'p': len(new_preds), 'y_cens': data_centered[is_800]['apt'],
+                    'U': 1, 'X_cens': tobit_data[is_800][new_preds]}
     # init_test = [{'alpha': 240, 'beta': [2.5, 5.4, -13, -48], 'sigma':50}] * 4
     # init=init_test,
     cens_cum_fit = cens_cum_model.sampling(data=cens_cum_dict, iter=2000, chains=4, 
                                            warmup=500)
     cens_cum_res = cens_cum_fit.extract()
     print('β: {}'.format(cens_cum_res['beta'][500:].mean(axis=0)))
-    # β: [ 1.60675576  0.05637323  0.11398783 -0.0040648  -0.01204385]
-    # different than for the simple model :(
+    return cens_cum_fit, cens_cum_model
+    # do I need to include the censored values in X or not???
+    # not including:
+    # β: [ 0.3508228   0.23064864  0.44042431 -0.01891388 -0.06312343]
+    # β: [ 0.34993966  0.23168326  0.44063511 -0.01866239 -0.0629307 ]
+    # including:
+    # β: [ 0.30333895  0.24297675  0.50404342 -0.0168984  -0.06061141]
+    # β: [ 0.30333895  0.24297675  0.50404342 -0.0168984  -0.06061141]
+    # looks like the must _not_ be included but specified separately.
+    
+    # including: 
+
     # if not using scaling - fails due to:
     #   Log probability evaluates to log(0), i.e. negative infinity.
     #   Stan can't start sampling from this initial value.
-    
-    # I could maybe use Phi_approx?? but no idea how.
-    # would it help to specify a prior for alpha and beta? could run OLS first 
-    # and orient towards these values. But when initialising them towards these values,
-    # the model runs, spams some warnings and gives completely different estimates.
+
 
 
 
@@ -416,7 +477,10 @@ def __main__():
     # y_cens look ok though
     # tau quite large -> 23, close to the largest „friend_group“
     # larger phis now :) in negative and positive!
-    fit, model = tobit_simple_model(tobit_data, scaled=True)
+    
+    # investigate: can I use the normal_l(c)cdf function?
+    # fit, model = tobit_simple_model(tobit_data, scaled=True)
+    fit, model = tobit_cum_sum_scaled(tobit_data)
     
     az.plot_trace(fit, compact=True)
     az.plot_pair(fit, ['tau', 'alpha', 'sigma'], divergences=True)

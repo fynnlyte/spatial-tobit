@@ -6,6 +6,7 @@ data {
     vector[n] y;  // all observed variables
     int<lower=0> n_cens; // number of censored variable
     real<lower=max(y)> U; // censoring point
+    matrix[n_cens, p] X_cens; // predictor matrix (censored)
 }
 parameters {
     vector[p] beta;
@@ -13,5 +14,5 @@ parameters {
 }
 model {
     y ~ normal(X * beta, sigma);
-    target += n_cens * (normal_lccdf(U | X * beta, sigma));
+    target += n_cens * normal_lccdf(U | X_cens * beta, sigma);
 }

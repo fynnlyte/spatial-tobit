@@ -106,3 +106,8 @@ if not nx.is_connected(adj_graph):
     conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
     isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
     print(isolated_nodes)
+    
+    
+#Check of the isolated nodes
+#Isolated nodes are road segment thats are not correctly connected in the traffic shape files. We can remove them since they are not too much
+    

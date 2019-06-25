@@ -4,14 +4,15 @@
 import arcpy
 
 #Used shapefiles
-trafficShapeFile = r'.\data\NewYork2017.shp'
-crashCSVFile = r'.\data\NYPD_Motor_Vehicle_Collisions_Clean.csv'
-crashShapeFile = r'.\data\NewYorkCrashes.shp'
+workPath = os.getcwd()
+trafficShapeFile = workPath + r'\data\NewYork2017.shp'
+crashCSVFile = workPath + r'\data\NYPD_Motor_Vehicle_Collisions_Clean.csv'
+crashShapeFile = workPath +r'\data\NewYorkCrashes.shp'
 
-mappingTrafficShapeFile = r'.\data\NewYork2017_mapping.shp'
-segmentShapeFile = r'.\data\Segment_NewYork2017_FullBlob.shp'
-segmentShapeFile2 = r'.\data\Segment_NewYork2017_Intersected.shp'
-segmentShapeFile3 = r'.\data\Segment_NewYork2017_Mapped.shp'
+mappingTrafficShapeFile = workPath + r'\data\NewYork2017_mapping.shp'
+segmentShapeFile = workPath + r'\data\Segment_NewYork2017_FullBlob.shp'
+segmentShapeFile2 = workPath + r'\data\Segment_NewYork2017_Intersected.shp'
+segmentShapeFile3 = workPath + r'\data\Segment_NewYork2017_Mapped.shp'
 segmentShapeFile3Name = "Segment_NewYork2017_Mapped"
 
 
@@ -75,7 +76,7 @@ match_option ="SHARE_A_LINE_SEGMENT_WITH")
 #Spatial join crash 
 #Use distance to determine if map is valid or not!
 #Avoid double attaching of 
-outName = r'.\data\NewYorkCrashes_Mapped.shp'
+outName = workPath + r'\data\NewYorkCrashes_Mapped.shp'
 
 fieldmappings = arcpy.FieldMappings()
 
@@ -102,7 +103,7 @@ match_option ="CLOSEST", search_radius="0.0002",distance_field_name ="join_dist"
 
 
 ##Create points at intersects -> mistakes can occur with bridges etc.
-intersectionShapeFile = r'.\data\Intersections.shp'
+intersectionShapeFile = workPath + r'\data\Intersections.shp'
 arcpy.Intersect_analysis (in_features =segmentShapeFile3Name, out_feature_class=intersectionShapeFile, join_attributes="ONLY_FID", output_type="POINT")
 #Create point id
 #Add fields segment shape file, length and id
@@ -115,7 +116,7 @@ arcpy.CalculateField_management (in_table = intersectionShapeFile, field = "Ints
 
 
 ##Map points to cornering roads
-joinedIntersectionsShapeFile = crashShapeFile = r'.\data\Adjacency.shp'
+joinedIntersectionsShapeFile = crashShapeFile = workPath + r'\data\Adjacency.shp'
 fieldmappings = arcpy.FieldMappings()
 
 # Add all fields from inputs.

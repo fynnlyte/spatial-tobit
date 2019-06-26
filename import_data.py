@@ -90,7 +90,7 @@ desc = segmentDF.describe()
 
 # first very simply approach: run tobit model on a fraction of the dataset with 
 # Three non-categorical vals as predictors (ok, Through_La technically is...)
-predictors = ['ones', 'Length_m', 'AADT', 'Through_La']
+predictors = ['Length_m', 'AADT', 'Through_La']
 
 # some verifications before using the data: 
 # - is the adjacency matrix symmetric? Necessary for generating a sparse
@@ -116,7 +116,7 @@ if empty_row_count > 0:
 ###
 filtered_df = segmentDF
 filtered_matrix = adjacencyMatrix
-filtered_df['ones'] = np.ones(filtered_df.shape[0])
+# filtered_df['ones'] = np.ones(filtered_df.shape[0]) # not useful with QR
 tobit_model = StanModel(file=Path('models/crash_tobit.stan').open(),
                         extra_compile_args=["-w"])
 car_model = StanModel(file=Path('models/crash_CAR.stan').open(),
@@ -134,12 +134,12 @@ tobit_dict = {'n_obs': not_cens.sum(), 'n_cens': is_cens.sum(), 'p': len(predict
               'y_obs': filtered_df[not_cens]['CrashRate'], 'U': threshold,
               'X': filtered_df[predictors]}
 tobit_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
-tobit_fit = tobit_model.sampling(data=tobit_dict, iter=20000, warmup=4000, 
+tobit_fit = tobit_model.sampling(data=tobit_dict, iter=1000, warmup=500, 
                                  control=tobit_params)
 tobit_info = tobit_fit.stansummary()
-with open(Path('data/crash_tobit.log'), 'w') as t_log:
+with open(Path('data/crash_tobit_QR_gam.log'), 'w') as t_log:
     t_log.write(tobit_info)
-dump(tobit_fit, Path('data/crash_tobit.joblib'))
+dump(tobit_fit, Path('data/crash_tobit_QR_gam.joblib'))
 
 # 95% divergence
 # 5% max depth of 10
@@ -168,15 +168,17 @@ dump(tobit_fit, Path('data/crash_tobit.joblib'))
 # but nice. The parameters β are roughly same. Vectorisation seems OK.
 
     
-# WARNING: this will take ages
+# WARNING: this will take ages for large iter.
 c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
 car_dict = tobit_dict.copy()
 car_dict['W'] = filtered_matrix
 car_dict['W_n'] = filtered_matrix.sum()//2
 car_dict['n'] = data_centered.shape[0]
-car_fit = car_model.sampling(data=car_dict, iter=20000, warmup=4000, control=c_params)
+car_fit = car_model.sampling(data=car_dict, iter=1000, warmup=500, control=c_params)
 car_info = car_fit.stansummary()
-with open('data/crash_car.log', 'w') as c_log:
+with open('data/crash_car_qr.log', 'w') as c_log:
     c_log.write(car_info)
-dump(car_fit, 'data/car_tobit.joblib')
+dump(car_fit, 'data/car_tobit_qr.joblib')
+# WARNING: E-BFMI 0.001 - 0.06
+
 

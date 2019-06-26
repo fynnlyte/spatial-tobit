@@ -47,9 +47,16 @@ data {
   int<lower = n, upper= n*n> W_n; // number of adjacent region pairs (i.e. edges in graph)
 }
 transformed data {
+  matrix[n, p] Q_ast;
+  matrix[p, p] R_ast;
+  matrix[p, p] R_ast_inverse;
   int W_sparse[W_n, 2];   // adjacency pairs
   vector[n] D_sparse;     // diagonal of D (number of neigbors for each site)
   vector[n] lambda;       // eigenvalues of invsqrtD * W * invsqrtD
+  // thin and scale the QR decomposition
+  Q_ast = qr_Q(X)[, 1:p] * sqrt(n - 1);
+  R_ast = qr_R(X)[1:p, ] / sqrt(n - 1);
+  R_ast_inverse = inverse(R_ast);
   { // generate sparse representation for W
   int counter;
   counter = 1;
@@ -74,7 +81,8 @@ transformed data {
   }
 }
 parameters {
-  vector[p] beta;
+  vector[p] theta; // coefficients on Q_ast
+  real beta_zero; // intercept
   vector[n] phi;
   real<lower = 0> tau; 
   real<lower = 0, upper = 0.99> alpha; // spatial dependence, not allowing IAR
@@ -90,6 +98,10 @@ model {
   sigma ~ gamma(0.001, 0.001); // todo: these vals were for 1/σ^2. 
   tau ~ gamma(2, 2); // todo - this is from CARstan, but might need something else...
   phi ~ sparse_car(tau, alpha, W_sparse, D_sparse, lambda, n, W_n);
-  beta ~ normal(0, 2); // todo: ~ normal(0, 10000) was used in paper, but this suits to the params.
-  y ~ normal(X * beta + phi, sigma);
+  //theta ~ normal(0, 2); // todo: might need a prior for theta instead of beta then.
+  y ~ normal(Q_ast * theta + beta_zero + phi, sigma);
+}
+generated quantities{
+    vector[p] beta;
+    beta = R_ast_inverse * theta; // coefficients on X
 }

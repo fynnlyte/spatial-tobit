@@ -109,51 +109,6 @@ empty_row_count = (adjacencyMatrix.sum(axis=0) == 0).sum()
 if empty_row_count > 0:
     print('adj matrix has %s rows/cols without any edge.' % empty_row_count)
 
-"""
-adj_graph = nx.Graph(adjacencyMatrix)
-if not nx.is_connected(adj_graph):
-    print('Need to remove nodes:')
-    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
-    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
-    print(isolated_nodes)
-
-# segment ids and also rows/ cols in adjacency-matrix are 0-indexed!!!
-# WTF - there is one entry with one!! That may not happen.
-(adjacencyMatrix.sum(axis=1) == 1).sum()
-(adjacencyMatrix.sum(axis=0) == 1).sum()
-filtered_df = segmentDF[adjacencyMatrix.sum(axis=0) > 0].reset_index()
-n_filt = filtered_df.shape[0]
-filtered_matrix = np.zeros((n_filt, n_filt), dtype=int)
-segmentID_to_index = dict()
-for i, s_id in filtered_df[['Segment_ID']].itertuples(index=True):
-    segmentID_to_index[int(s_id)] = i
-
-for i in range(n_filt):
-    isec_id = int(filtered_df.iloc[i]['Segment_ID'])
-    intersec = intersection_list[isec_id]
-
-    connectedSegments = adjacencyData.loc[adjacencyData['Intsec_ID'] == intersec]["Segment_ID"].tolist()   
-    #Combine all segments to tuples
-    combineSegments = list(itertools.permutations(connectedSegments, 2))
-    #Loop over all tuples and set to 1 (connection between these to segments)   
-    for j in range(len(combineSegments)):
-        tup = combineSegments[j]
-        #print(tup)
-        s_id = int(tup[0])
-        d_id = int(tup[1])
-        if s_id in segmentID_to_index and d_id in segmentID_to_index:
-            s = segmentID_to_index[s_id]
-            d = segmentID_to_index[d_id]
-            if s in isolated_nodes or d in isolated_nodes:
-                print('Skipping isolated: %s - %d' % (s,d))
-            else:
-                filtered_matrix[s,d] = 1
-        else:
-            print('skipping edge: %s - %d' % (s_id, d_id))
-           
-print('how many zero rows in my matrix? %s. WTF??' % (filtered_matrix.sum(axis=0) == 0).sum())
-
-"""
 
 
 ###
@@ -178,19 +133,50 @@ tobit_dict = {'n_obs': not_cens.sum(), 'n_cens': is_cens.sum(), 'p': len(predict
               'ii_obs': ii_obs, 'ii_cens': ii_cens, 
               'y_obs': filtered_df[not_cens]['CrashRate'], 'U': threshold,
               'X': filtered_df[predictors]}
-tobit_fit = tobit_model.sampling(data=tobit_dict, iter=4000, warmup=500)
+tobit_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+tobit_fit = tobit_model.sampling(data=tobit_dict, iter=20000, warmup=4000, 
+                                 control=tobit_params)
 tobit_info = tobit_fit.stansummary()
-dump(tobit_fit, 'data/crash_tobit.joblib')
-with open('data/crash_tobit.log', 'w') as t_log:
+with open(Path('data/crash_tobit.log'), 'w') as t_log:
     t_log.write(tobit_info)
+dump(tobit_fit, Path('data/crash_tobit.joblib'))
 
-c_params = {'adapt_delta': 0.8, 'max_treedepth': 20}
+# 95% divergence
+# 5% max depth of 10
+# low E-BFMI (0.039 - 0.07)
+    
+# now with adapt_delta: 0.9 and depth: 12
+# 89% divergence
+# 10% max depth
+# low E-BFMI (0.005 - 0.03)
+    
+# seems like reparametrisation is really necessary...
+
+# as comparison: without the vectorisation
+#t_old_dict = {'n': data_centered.shape[0], 'p': len(predictors), 'X': filtered_df[predictors],
+#              'y': filtered_df['CrashRate'], 'U': threshold, 'n_cens': is_cens.sum()} 
+#t_old_model = StanModel(file=Path('models/crash_tobit_old.stan').open(),
+#                        extra_compile_args=["-w"])
+#t_old_fit = t_old_model.sampling(data=t_old_dict, iter=20000, warmup=4000)
+#dump(t_old_fit, Path('data/crash_old.joblib'))
+#old_info = t_old_fit.stansummary()
+#with open(Path('data/crash_old.log'), 'w') as old_log:
+#    old_log.write(old_info)
+# 96% div
+# 3.8% max tree depth
+# low E-BFMI (0.36 - 0.08)
+# but nice. The parameters β are roughly same. Vectorisation seems OK.
+
+    
+# WARNING: this will take ages
+c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
 car_dict = tobit_dict.copy()
 car_dict['W'] = filtered_matrix
 car_dict['W_n'] = filtered_matrix.sum()//2
 car_dict['n'] = data_centered.shape[0]
-car_fit = car_model.sampling(data=car_dict, iter=1000, warmup=500, control=c_params)
+car_fit = car_model.sampling(data=car_dict, iter=20000, warmup=4000, control=c_params)
 car_info = car_fit.stansummary()
-dump(car_fit, 'data/car_tobit.joblib')
 with open('data/crash_car.log', 'w') as c_log:
     c_log.write(car_info)
+dump(car_fit, 'data/car_tobit.joblib')
+

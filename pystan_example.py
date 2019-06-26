@@ -156,12 +156,12 @@ def tobit_ifelse_model(tobit_data: pd.DataFrame):
     # yay works. intercept: 208.6, read: 2.70, math: 5.93, gen: -12.75, voc: -46.6
     return censored_loop_fit, censored_loop_model
 
-def tobit_vectorised(tobit_data: pd.DataFrame, scaled: bool = False):
+def tobit_vec_QR(tobit_data: pd.DataFrame, scaled: bool = False):
     """
     vectorised version of the tobit model that combines the parameters for the censored
     values with the uncensored values into a transformed y for more efficiency.
     """
-    vec_model = StanModel(file=Path('models/tobit_students_vectorised.stan').open(),
+    vec_model = StanModel(file=Path('models/tobit_students_vec_qr.stan').open(),
                                extra_compile_args=["-w"])
     not_800 = tobit_data['apt'] != 800
     is_800 = tobit_data['apt'] == 800
@@ -184,6 +184,7 @@ def tobit_vectorised(tobit_data: pd.DataFrame, scaled: bool = False):
                                            warmup=2000, control=c_params)
     print('β: {}'.format(vec_fit['beta'][501:].mean(axis=0)))
     print(vec_fit.stansummary())
+    return vec_fit, vec_model
     # website:  β: [209.5488,      2.6980,      5.9148,    -12.7145,    -46.1431]
     # expected: β: [208.87713433   2.7046745    5.91765089 -12.388193   -45.92047109]
     # ignoring the lhs warning:
@@ -205,7 +206,6 @@ def tobit_vectorised(tobit_data: pd.DataFrame, scaled: bool = False):
     # β: [208.68984203   2.7037005    5.9266084  -12.64173345 -45.95678012]
     # β: [208.35655102   2.70051036   5.93408925 -12.48927206 -45.88677641]
     # β: [208.43953925   2.69778126   5.93907365 -12.77548681 -46.14267259]
-    return vec_fit, vec_model
     
 
 
@@ -454,7 +454,7 @@ def scaled_spare_car(tobit_data: pd.DataFrame, ad_matrix):
                      'ii_cens': ii_cens, 'p': len(new_preds), 
                      'y_cens': data_centered[is_800]['apt'],
                      'W': ad_matrix, 'U': 1, 'W_n': ad_matrix.sum()//2} 
-    c_sp_model = StanModel(file=Path('models/sparse_tobitcar_students.stan').open(), 
+    c_sp_model = StanModel(file=Path('models/sparse_tcar_students_without_QR.stan').open(), 
                            verbose=False, extra_compile_args=["-w"])
     c_params = {'adapt_delta': 0.95, 'max_treedepth':12}
     # no more saturation, but still divergence...
@@ -471,6 +471,8 @@ def scaled_spare_car(tobit_data: pd.DataFrame, ad_matrix):
     del simpler_csp['y_cens']
     del simpler_csp['beta']
     del simpler_csp['y']
+    if 'theta' in simpler_csp:
+        del simpler_csp['theta']
     c_sp_df = pd.DataFrame.from_dict(simpler_csp)
     sns.pairplot(c_sp_df)
     return c_sp_fit, c_sp_model
@@ -481,6 +483,7 @@ def __main__():
     ad_matrix = get_students_adjacency(tobit_data)
     # here, try any of the models defined before.
     fit, model = scaled_spare_car(tobit_data, ad_matrix)
+    
     # y_cens look ok though
     # tau quite large -> 23, close to the largest „friend_group“
     # larger phis now :) in negative and positive!
@@ -488,6 +491,11 @@ def __main__():
     # investigate: can I use the normal_l(c)cdf function?
     # fit, model = tobit_simple_model(tobit_data, scaled=True)
     # fit, model = tobit_cum_sum_scaled(tobit_data)
+    
+    # fit, model = tobit_vec_QR(tobit_data)
+    # note: this yields a expected values for β, but throws warnings for:
+    # - Rhat (though everything is 1)
+    # - 
     
     az.plot_trace(fit, compact=True)
     az.plot_pair(fit, ['tau', 'alpha', 'sigma'], divergences=True)

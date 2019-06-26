@@ -454,7 +454,8 @@ def scaled_spare_car(tobit_data: pd.DataFrame, ad_matrix):
                      'ii_cens': ii_cens, 'p': len(new_preds), 
                      'y_cens': data_centered[is_800]['apt'],
                      'W': ad_matrix, 'U': 1, 'W_n': ad_matrix.sum()//2} 
-    c_sp_model = StanModel(file=Path('models/sparse_tcar_students_without_QR.stan').open(), 
+    # or just 'models/sparse_tcar_students_without_QR.stan'
+    c_sp_model = StanModel(file=Path('sparse_tobitcar_students.stan').open(), 
                            verbose=False, extra_compile_args=["-w"])
     c_params = {'adapt_delta': 0.95, 'max_treedepth':12}
     # no more saturation, but still divergence...

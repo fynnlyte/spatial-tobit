@@ -47,16 +47,10 @@ data {
   real<lower = max(y_obs)> U; // todo: change to upper and min for crash rate
 }
 transformed data {
-  matrix[n, p] Q_ast;
-  matrix[p, p] R_ast;
-  matrix[p, p] R_ast_inverse;
   int W_sparse[W_n, 2];   // adjacency pairs
   vector[n] D_sparse;     // diagonal of D (number of neigbors for each site)
   vector[n] lambda;       // eigenvalues of invsqrtD * W * invsqrtD
-  // thin and scale the QR decomposition
-  Q_ast = qr_Q(X)[, 1:p] * sqrt(n - 1);
-  R_ast = qr_R(X)[1:p, ] / sqrt(n - 1);
-  R_ast_inverse = inverse(R_ast);
+  
   { // generate sparse representation for W
   int counter;
   counter = 1;
@@ -81,8 +75,7 @@ transformed data {
   }
 }
 parameters {
-  vector[p] theta;      // coefficients on Q_ast
-  //vector[p] beta;
+  vector[p] beta;
   vector[n] phi;
   real<lower = 0> tau; 
   real<lower = 0, upper = 0.99> alpha; // spatial dependence
@@ -99,11 +92,6 @@ model {
   sigma ~ gamma(0.001, 0.001);
   tau ~ gamma(2, 2); // todo - this is from CARstan, but might need something else...
   phi ~ sparse_car(tau, alpha, W_sparse, D_sparse, lambda, n, W_n);
-  //beta ~ normal(0, 2); // todo: some prior for theta instead?
-  y ~ normal(Q_ast * theta + phi, sigma);
-  //y ~ normal(X * beta + phi, sigma);
-}
-generated quantities{
-    vector[p] beta;
-    beta = R_ast_inverse * theta; // coefficients on X
+  beta ~ normal(0, 2); // todo: ~ normal(0, 10000) was used in paper, but this suits to the params.
+  y ~ normal(X * beta + phi, sigma);
 }

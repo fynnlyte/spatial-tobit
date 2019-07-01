@@ -4,6 +4,9 @@ import numpy as np
 import itertools
 import networkx as nx
 from pathlib import Path
+from pystan import StanModel, check_hmc_diagnostics
+from sklearn.preprocessing import MaxAbsScaler
+from joblib import dump
 
 
 #Use crash data to later infere crash counts
@@ -79,13 +82,15 @@ for i in range(len(intersection_list)):
         
 #######################################################################################################
 #Use segmentData and adjacencyMatrix
-        
+# Matrix needs to be cleaned up before model can be used :(
+# - May not contain any vertices without neighbors!
+
 segmentDF = pd.DataFrame(segmentData)
 desc = segmentDF.describe()
 
 # first very simply approach: run tobit model on a fraction of the dataset with 
 # Three non-categorical vals as predictors (ok, Through_La technically is...)
-predictors = ['Length_m', 'AADT', 'Throug_La']
+predictors = ['ones', 'Length_m', 'AADT', 'Through_La']
 
 # some verifications before using the data: 
 # - is the adjacency matrix symmetric? Necessary for generating a sparse
@@ -100,12 +105,81 @@ for i in range(n_segments):
             print('Error: encountered value {} in row/col {}'
                   .format(adjacencyMatrix[i,i], i))
 # - is the adjacency graph connected or are there some weird segments?
-adj_graph = nx.Graph(adjacencyMatrix)
-if not nx.is_connected(adj_graph):
-    print('adj graph is not connected! need to remove nodes:')
-    conn_comp = [c for c in sorted(nx.connected_components(adj_graph), reverse=True, key=len)]
-    isolated_nodes = [n for c in conn_comp[1:len(conn_comp)] for n in c ]
-    print(isolated_nodes)
+empty_row_count = (adjacencyMatrix.sum(axis=0) == 0).sum()
+if empty_row_count > 0:
+    print('adj matrix has %s rows/cols without any edge.' % empty_row_count)
+
+
+
+###
+# model begins here
+###
+filtered_df = segmentDF
+filtered_matrix = adjacencyMatrix
+filtered_df['ones'] = np.ones(filtered_df.shape[0])
+tobit_model = StanModel(file=Path('models/crash_tobit.stan').open(),
+                        extra_compile_args=["-w"])
+car_model = StanModel(file=Path('models/crash_CAR.stan').open(),
+                      extra_compile_args=["-w"])
+
+trans = MaxAbsScaler().fit_transform(filtered_df[predictors + ['CrashRate']])
+data_centered = pd.DataFrame(trans, columns=predictors + ['CrashRate'])
+threshold = 0.0000000001
+is_cens = data_centered['CrashRate'] < threshold
+not_cens = data_centered['CrashRate'] >= threshold
+ii_obs = filtered_df[not_cens].index + 1
+ii_cens = filtered_df[is_cens].index + 1
+tobit_dict = {'n_obs': not_cens.sum(), 'n_cens': is_cens.sum(), 'p': len(predictors),
+              'ii_obs': ii_obs, 'ii_cens': ii_cens,
+              'y_obs': filtered_df[not_cens]['CrashRate'], 'U': threshold,
+              'X': filtered_df[predictors]}
+tobit_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+tobit_fit = tobit_model.sampling(data=tobit_dict, iter=20000, warmup=4000,
+                                 control=tobit_params)
+tobit_info = tobit_fit.stansummary()
+with open(Path('data/crash_tobit.log'), 'w') as t_log:
+    t_log.write(tobit_info)
+dump(tobit_fit, Path('data/crash_tobit.joblib'))
+
+# 95% divergence
+# 5% max depth of 10
+# low E-BFMI (0.039 - 0.07)
+
+# now with adapt_delta: 0.9 and depth: 12
+# 89% divergence
+# 10% max depth
+# low E-BFMI (0.005 - 0.03)
+
+# seems like reparametrisation is really necessary...
+
+# as comparison: without the vectorisation
+#t_old_dict = {'n': data_centered.shape[0], 'p': len(predictors), 'X': filtered_df[predictors],
+#              'y': filtered_df['CrashRate'], 'U': threshold, 'n_cens': is_cens.sum()}
+#t_old_model = StanModel(file=Path('models/crash_tobit_old.stan').open(),
+#                        extra_compile_args=["-w"])
+#t_old_fit = t_old_model.sampling(data=t_old_dict, iter=20000, warmup=4000)
+#dump(t_old_fit, Path('data/crash_old.joblib'))
+#old_info = t_old_fit.stansummary()
+#with open(Path('data/crash_old.log'), 'w') as old_log:
+#    old_log.write(old_info)
+# 96% div
+# 3.8% max tree depth
+# low E-BFMI (0.36 - 0.08)
+# but nice. The parameters β are roughly same. Vectorisation seems OK.
+
+
+# WARNING: this will take ages
+c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+car_dict = tobit_dict.copy()
+car_dict['W'] = filtered_matrix
+car_dict['W_n'] = filtered_matrix.sum()//2
+car_dict['n'] = data_centered.shape[0]
+car_fit = car_model.sampling(data=car_dict, iter=20000, warmup=4000, control=c_params)
+car_info = car_fit.stansummary()
+with open('data/crash_car.log', 'w') as c_log:
+    c_log.write(car_info)
+dump(car_fit, 'data/car_tobit.joblib')
+
 
 ########################################################################################################################
 # Calculate Moran's I

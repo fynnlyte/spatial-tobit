@@ -18,6 +18,8 @@ plt.rcParams["font.size"] = 20
 predictors = ['read', 'math', 'general', 'vocational']
 coded_progs = ['academic', 'general','vocational']
 new_preds = ['ones'] + predictors
+c_params = {'adapt_delta': 0.95, 'max_treedepth':15}
+
 
 
 def verify_stan():
@@ -48,7 +50,8 @@ def linear_model():
     """
     1st example from Stan User's Guide
     """
-    linear_model = StanModel(file=Path('models/linear_example.stan').open())
+    linear_model = StanModel(file=Path('models/linear_example.stan').open(),
+                             extra_compile_args=["-w"])
     x = list(range(10))
     y = [1.1, 2.04, 3.07, 3.88, 4.95, 6.11, 7.03, 7.89, 8.91, 10]
     linear_data = {'x':x, 'y':y, 'N': 10}
@@ -68,7 +71,10 @@ def prepare_tobit_data() -> pd.DataFrame:
     cat_trans = Pipeline(steps=[('onehot', OneHotEncoder())])
     ct = ColumnTransformer([('cat', cat_trans, ['prog'])])
     trans_progs = pd.DataFrame(ct.fit_transform(tobit_data), columns=coded_progs)
-    return pd.concat([tobit_data, trans_progs], axis=1)
+    tobit_data= pd.concat([tobit_data, trans_progs], axis=1)
+    tobit_data['ones'] = np.ones(tobit_data.shape[0])
+    return tobit_data
+
 
 def tobit_linear_model(tobit_data: pd.DataFrame):
     """
@@ -77,14 +83,15 @@ def tobit_linear_model(tobit_data: pd.DataFrame):
     """
     tobit_datadict = {'y': tobit_data['apt'], 'N': tobit_data.shape[0], 'K': len(predictors),
                       'X': tobit_data[predictors]}
-    tobit_linear_model = StanModel(file=Path('models/linear_students.stan').open())
+    tobit_linear_model = StanModel(file=Path('models/linear_students.stan').open(),
+                                   extra_compile_args=["-w"])
     tob_lin_fit = tobit_linear_model.sampling(data=tobit_datadict, iter=1000, chains=4)
     tob_lin_res = tob_lin_fit.extract()
     print('α: {}'.format(tob_lin_res['alpha'][501:].mean()))
     print('β: {}'.format(tob_lin_res['beta'][501:].mean(axis=0)))
     return tob_lin_fit, tobit_linear_model
     
-def tobit_simple_model(tobit_data: pd.DataFrame):
+def tobit_simple_model(tobit_data: pd.DataFrame, scaled: bool=False):
     """
     2) using a censored model. Has the same sigma - in the paper, the distinction 
     between ε_{it} ~ normal(0,σ^2and θ^m_{it} ~ normal(0, δ^2_m) is clearly made.
@@ -92,22 +99,32 @@ def tobit_simple_model(tobit_data: pd.DataFrame):
     Intercept:  209.5488
     mydata$read: 2.6980, mydata$math: 5.9148  
     """
-    censored_model = StanModel(file=Path('models/tobit_students_explicit.stan').open())
+    censored_model = StanModel(file=Path('models/tobit_students_split.stan').open(),
+                               extra_compile_args=["-w"])
     not_800 = tobit_data['apt'] != 800
     is_800 = tobit_data['apt'] == 800
-    censored_dict_excluded = {'X': tobit_data[not_800][predictors], 
-                              'N': tobit_data.shape[0] - is_800.sum(), 
-                              'y': tobit_data[not_800]['apt'], 'N_cens': is_800.sum(), 
-                              'K': len(predictors), 'X_cens': tobit_data[is_800][predictors], 
-                              'y_cens': tobit_data[is_800]['apt']}
-    censored_fit = censored_model.sampling(data=censored_dict_excluded, iter=1000, chains=4)
+    if not scaled:
+        cens_dict_ex = {'X': tobit_data[not_800][new_preds], 
+                                  'n': tobit_data.shape[0] - is_800.sum(), 
+                                  'y': tobit_data[not_800]['apt'], 'n_cens': is_800.sum(), 
+                                  'p': len(new_preds), 'X_cens': tobit_data[is_800][new_preds], 
+                                  'y_cens': tobit_data[is_800]['apt'], 'U': 800}
+    else:
+        trans = MaxAbsScaler().fit_transform(tobit_data[new_preds + ['apt']])
+        data_centered = pd.DataFrame(trans, columns=new_preds + ['apt'])
+        cens_dict_ex = {'X': data_centered[not_800][new_preds], 'n': tobit_data.shape[0] - is_800.sum(), 
+                     'y': data_centered[not_800]['apt'], 'n_cens': is_800.sum(),
+                     'p': len(new_preds), 'y_cens': data_centered[is_800]['apt'],
+                     'U': 1, 'X_cens': tobit_data[is_800][new_preds]} 
+    censored_fit = censored_model.sampling(data=cens_dict_ex, iter=2000, chains=4, 
+                                           warmup=500, control=c_params)
     censored_res = censored_fit.extract()
-    print('α: {}'.format(censored_res['alpha'][501:].mean()))
     print('β: {}'.format(censored_res['beta'][501:].mean(axis=0)))
     return censored_fit, censored_model
-    # as a comparison: if I include all original points - bad.
-    # Intercept: 198.18
-    # read: 2.72, math: 6.15
+    # without scaling:
+    # β: [208.87713433   2.7046745    5.91765089 -12.388193   -45.92047109]
+    # with scaling, the following are returned:
+    # β: [ 0.3502525   0.2316054   0.44129793 -0.01981657 -0.06383977]
 
 def get_datadict(tobit_data: pd.DataFrame):
     """
@@ -126,7 +143,8 @@ def tobit_ifelse_model(tobit_data: pd.DataFrame):
     Use a loop instead of two matrices as preparation for using the adjacency matrix:
     """
     censored_dict = get_datadict(tobit_data)
-    censored_loop_model = StanModel(file=Path('models/tobit_students_ifelse.stan').open())
+    censored_loop_model = StanModel(file=Path('models/tobit_students_ifelse.stan').open(),
+                                    extra_compile_args=["-w"])
     censored_loop_fit = censored_loop_model.sampling(data=censored_dict, iter=2000, 
                                                      chains=4, warmup=500)
     az.plot_trace(censored_loop_fit)
@@ -138,7 +156,60 @@ def tobit_ifelse_model(tobit_data: pd.DataFrame):
     # yay works. intercept: 208.6, read: 2.70, math: 5.93, gen: -12.75, voc: -46.6
     return censored_loop_fit, censored_loop_model
 
-def tobit_cum_sum(tobit_data: pd.DataFrame):
+def tobit_vec_QR(tobit_data: pd.DataFrame, scaled: bool = False):
+    """
+    vectorised version of the tobit model that combines the parameters for the censored
+    values with the uncensored values into a transformed y for more efficiency.
+    """
+    vec_model = StanModel(file=Path('models/tobit_students_vec_qr.stan').open(),
+                               extra_compile_args=["-w"])
+    not_800 = tobit_data['apt'] != 800
+    is_800 = tobit_data['apt'] == 800
+    ii_obs = tobit_data[not_800]['id']
+    ii_cens = tobit_data[is_800]['id']
+    if not scaled:
+        vec_dict = {'X': tobit_data[new_preds], 'n_obs': not_800.sum(), 
+                    'n_cens': is_800.sum(), 'U': 800,
+                    'y_obs': tobit_data[not_800]['apt'], 'p': len(new_preds), 
+                    'ii_obs': ii_obs, 'ii_cens': ii_cens}
+    else:
+        trans = MaxAbsScaler().fit_transform(tobit_data[new_preds + ['apt']])
+        data_centered = pd.DataFrame(trans, columns=new_preds + ['apt'])
+        vec_dict = {'X': data_centered[new_preds], 'n_obs': not_800.sum(), 
+                    'n_cens': is_800.sum(), 'U': 800,
+                    'y_obs': data_centered[not_800]['apt'], 'p': len(new_preds), 
+                    'ii_obs': ii_obs, 'ii_cens': ii_cens, 'X_cens': data_centered[is_800][new_preds]}
+
+    vec_fit = vec_model.sampling(data=vec_dict, iter=10000, chains=4, 
+                                           warmup=2000, control=c_params)
+    print('β: {}'.format(vec_fit['beta'][501:].mean(axis=0)))
+    print(vec_fit.stansummary())
+    return vec_fit, vec_model
+    # website:  β: [209.5488,      2.6980,      5.9148,    -12.7145,    -46.1431]
+    # expected: β: [208.87713433   2.7046745    5.91765089 -12.388193   -45.92047109]
+    # ignoring the lhs warning:
+    # β: [208.05528958   2.69993771   5.93966351 -12.5479601  -45.75064593]
+    # β: [208.47512508   2.6983033    5.93729938 -12.73595247 -46.17020513]
+    # β: [208.00374372   2.68788628   5.95236835 -12.62635424 -45.91977168]
+    # with n= 10000:
+    # Gradient evaluation took 8 e-05  seconds
+    # β: [208.55708413   2.70249452   5.93190482 -12.87481702 -46.21411045]
+    # β: [208.50293045   2.70678501   5.92760618 -12.68745327 -46.11553276]
+    # looks OK to me...
+    # adding the target += like in docs for censored data 
+    # -> works neither with scaled nor with unscaled. Really seems to be OK.
+    
+    # using target += normal_lpdf(y| X * beta, sigma):
+    # gradient eval ~ 6.4 - 6.8 e-05 secs
+    # completely equivalent, but does not display the warning.
+    # β: [207.53523695   2.69524709   5.96005247 -13.08223192 -46.00076967]
+    # β: [208.68984203   2.7037005    5.9266084  -12.64173345 -45.95678012]
+    # β: [208.35655102   2.70051036   5.93408925 -12.48927206 -45.88677641]
+    # β: [208.43953925   2.69778126   5.93907365 -12.77548681 -46.14267259]
+    
+
+
+def tobit_cum_sum_scaled(tobit_data: pd.DataFrame):
     """
     Let's now try with the cumulative distribution function. This would be more elegant
     and more efficient than looping over the normals distributions.
@@ -148,24 +219,39 @@ def tobit_cum_sum(tobit_data: pd.DataFrame):
      - real normal_lccdf(reals y | reals mu, reals sigma)
         - if the (y-mu)/sigma < -37.5 or > 8.25, the will be an over/ underflow
     """
-    cens_cum_model = StanModel(file=Path('models/tobit_students_cumulative.stan').open())
-    cens_cum_model.diagnose()
-    cens_cum_dict = get_datadict()
-    cens_cum_dict['U'] = 800.0
-    init_test = [{'alpha': 240, 'beta': [2.5, 5.4, -13, -48], 'sigma':50}] * 4
+    trans = MaxAbsScaler().fit_transform(tobit_data[new_preds + ['apt']])
+    data_centered = pd.DataFrame(trans, columns=new_preds + ['apt'])
+    is_800 = tobit_data['apt'] == 800
+    not_800 = tobit_data['apt'] != 800
+    cens_cum_model = StanModel(file=Path('models/tobit_students_cumulative.stan').open(),
+                               extra_compile_args=["-w"])
+    cens_cum_dict = {'X': data_centered[not_800][new_preds], 
+                    'n': tobit_data.shape[0] - is_800.sum(), 
+                    'y': data_centered[not_800]['apt'], 'n_cens': is_800.sum(),
+                    'p': len(new_preds), 'y_cens': data_centered[is_800]['apt'],
+                    'U': 1, 'X_cens': tobit_data[is_800][new_preds]}
+    # init_test = [{'alpha': 240, 'beta': [2.5, 5.4, -13, -48], 'sigma':50}] * 4
+    # init=init_test,
     cens_cum_fit = cens_cum_model.sampling(data=cens_cum_dict, iter=2000, chains=4, 
-                                           init=init_test, warmup=500)
+                                           warmup=500)
     cens_cum_res = cens_cum_fit.extract()
-    print('α: {}'.format(cens_cum_res['alpha'][501:].mean()))
     print('β: {}'.format(cens_cum_res['beta'][500:].mean(axis=0)))
-    # fails due to:
+    return cens_cum_fit, cens_cum_model
+    # do I need to include the censored values in X or not???
+    # not including:
+    # β: [ 0.3508228   0.23064864  0.44042431 -0.01891388 -0.06312343]
+    # β: [ 0.34993966  0.23168326  0.44063511 -0.01866239 -0.0629307 ]
+    # including:
+    # β: [ 0.30333895  0.24297675  0.50404342 -0.0168984  -0.06061141]
+    # β: [ 0.30333895  0.24297675  0.50404342 -0.0168984  -0.06061141]
+    # looks like the must _not_ be included but specified separately.
+    
+    # including: 
+
+    # if not using scaling - fails due to:
     #   Log probability evaluates to log(0), i.e. negative infinity.
     #   Stan can't start sampling from this initial value.
-    
-    # I could maybe use Phi_approx?? but no idea how.
-    # would it help to specify a prior for alpha and beta? could run OLS first 
-    # and orient towards these values. But when initialising them towards these values,
-    # the model runs, spams some warnings and gives completely different estimates.
+
 
 
 
@@ -201,7 +287,8 @@ def tobit_temporal(tobit_data: pd.DataFrame):
         
     # now this becomes difficult with splitting censored from uncensored :(
     # should maybe try the other approach with the normal_lccdf
-    temp_model = StanModel(file=Path('models/tobit_stud_temp_same_dim.stan').open())
+    temp_model = StanModel(file=Path('models/tobit_stud_temp_same_dim.stan').open(),
+                           extra_compile_args=["-w"])
     
     N_cens = 17
     T = len(year_list)
@@ -305,7 +392,8 @@ def simple_car_model(tobit_data: pd.DataFrame, ad_matrix):
        - Unfortunately, there is no information available. Just need to set something that works.
 
     """
-    car_model = StanModel(file=Path('models/tobit_car_students.stan').open())
+    car_model = StanModel(file=Path('models/tobit_car_students.stan').open(),
+                          extra_compile_args=["-w"])
     car_dict = get_datadict()
     car_dict['W'] = ad_matrix
     car_dict['U'] = 800
@@ -325,7 +413,6 @@ def simple_car_model(tobit_data: pd.DataFrame, ad_matrix):
     return car_fit, car_model
 
 def get_sparse_modeldict(tobit_data: pd.DataFrame, ad_matrix):
-    tobit_data['ones'] = np.ones(tobit_data.shape[0])
     is_800 = tobit_data['apt'] == 800
     return {'X': tobit_data[new_preds], 'n': tobit_data.shape[0], 
             'y': tobit_data['apt'], 'n_cens': is_800.sum(),
@@ -334,7 +421,8 @@ def get_sparse_modeldict(tobit_data: pd.DataFrame, ad_matrix):
 
 def sparse_car_model(tobit_data: pd.DataFrame, ad_matrix):
     sparse_dict = get_sparse_modeldict(tobit_data, ad_matrix)
-    sparse_model = StanModel(file=Path('models/sparse_tobitcar_students.stan').open())
+    sparse_model = StanModel(file=Path('models/sparse_tobitcar_students.stan').open(),
+                             extra_compile_args=["-w"])
     sparse_fit = sparse_model.sampling(sparse_dict, iter=4000, warmup=500, chains=4)
     print(sparse_fit.stansummary())
     return sparse_fit, sparse_model
@@ -356,11 +444,18 @@ def scaled_spare_car(tobit_data: pd.DataFrame, ad_matrix):
     trans = MaxAbsScaler().fit_transform(tobit_data[new_preds + ['apt']])
     data_centered = pd.DataFrame(trans, columns=new_preds + ['apt'])
     is_800 = tobit_data['apt'] == 800
+    not_800 = tobit_data['apt'] != 800
+    ii_obs = tobit_data[not_800]['id']
+    ii_cens = tobit_data[is_800]['id']
+    # After using vectorisation: Gradient takes 0.0003  seconds.
     c_sparse_dict = {'X': data_centered[new_preds], 'n': tobit_data.shape[0], 
-                     'y': data_centered['apt'], 'n_cens': is_800.sum(),
-                     'p': len(new_preds), 'y_cens': data_centered[is_800]['apt'],
+                     'n_obs': not_800.sum(), 'n_cens': is_800.sum(), 
+                     'y_obs': data_centered[not_800]['apt'], 'ii_obs': ii_obs, 
+                     'ii_cens': ii_cens, 'p': len(new_preds), 
+                     'y_cens': data_centered[is_800]['apt'],
                      'W': ad_matrix, 'U': 1, 'W_n': ad_matrix.sum()//2} 
-    c_sp_model = StanModel(file=Path('models/sparse_tobitcar_students.stan').open(), 
+    # or just 'models/sparse_tcar_students_without_QR.stan'
+    c_sp_model = StanModel(file=Path('sparse_tobitcar_students.stan').open(), 
                            verbose=False, extra_compile_args=["-w"])
     c_params = {'adapt_delta': 0.95, 'max_treedepth':12}
     # no more saturation, but still divergence...
@@ -376,6 +471,9 @@ def scaled_spare_car(tobit_data: pd.DataFrame, ad_matrix):
     del simpler_csp['phi']
     del simpler_csp['y_cens']
     del simpler_csp['beta']
+    del simpler_csp['y']
+    if 'theta' in simpler_csp:
+        del simpler_csp['theta']
     c_sp_df = pd.DataFrame.from_dict(simpler_csp)
     sns.pairplot(c_sp_df)
     return c_sp_fit, c_sp_model
@@ -386,9 +484,20 @@ def __main__():
     ad_matrix = get_students_adjacency(tobit_data)
     # here, try any of the models defined before.
     fit, model = scaled_spare_car(tobit_data, ad_matrix)
+    
     # y_cens look ok though
     # tau quite large -> 23, close to the largest „friend_group“
     # larger phis now :) in negative and positive!
+    
+    # investigate: can I use the normal_l(c)cdf function?
+    # fit, model = tobit_simple_model(tobit_data, scaled=True)
+    # fit, model = tobit_cum_sum_scaled(tobit_data)
+    
+    # fit, model = tobit_vec_QR(tobit_data)
+    # note: this yields a expected values for β, but throws warnings for:
+    # - Rhat (though everything is 1)
+    # - 
+    
     az.plot_trace(fit, compact=True)
     az.plot_pair(fit, ['tau', 'alpha', 'sigma'], divergences=True)
     # seems like I'm having a lot of divergences where:

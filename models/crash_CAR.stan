@@ -36,27 +36,20 @@ functions {
 data {
   int<lower=0> n_obs; // number of uncensored rows
   int<lower=0> n_cens; // number of censored rows
-  int<lower=n_obs+n_cens, upper=n_obs+n_cens > n; 
-  int<lower = 1> p; // number of predictors + 1 for the intercept
+  int<lower=n_obs+n_cens, upper=n_obs+n_cens > n; // total no of rows
+  int<lower=0> p; // number of predictors
   int<lower=1, upper = n> ii_obs[n_obs]; // indices of observed
   int<lower=1, upper = n> ii_cens[n_cens]; // indices of censored
-  matrix[n, p] X; // full predictor matrix, including a row of ones for the intercept
   vector[n_obs] y_obs;  // all uncensored variables
+  real<lower=0,upper = min(y_obs)> U; // censoring point, accounting for rounding errors.
+  matrix[n, p] X; // predictor matrix (full)
   matrix<lower = 0, upper = 1>[n, n] W; // adjacency matrix
-  int<lower = 0, upper= n*n> W_n; // number of adjacent region pairs (i.e. edges in graph)
-  real<lower = max(y_obs)> U; // todo: change to upper and min for crash rate
+  int<lower = n, upper= n*n> W_n; // number of adjacent region pairs (i.e. edges in graph)
 }
 transformed data {
-  matrix[n, p] Q_ast;
-  matrix[p, p] R_ast;
-  matrix[p, p] R_ast_inverse;
   int W_sparse[W_n, 2];   // adjacency pairs
   vector[n] D_sparse;     // diagonal of D (number of neigbors for each site)
   vector[n] lambda;       // eigenvalues of invsqrtD * W * invsqrtD
-  // thin and scale the QR decomposition
-  Q_ast = qr_Q(X)[, 1:p] * sqrt(n - 1);
-  R_ast = qr_R(X)[1:p, ] / sqrt(n - 1);
-  R_ast_inverse = inverse(R_ast);
   { // generate sparse representation for W
   int counter;
   counter = 1;
@@ -81,13 +74,12 @@ transformed data {
   }
 }
 parameters {
-  vector[p] theta;      // coefficients on Q_ast
-  //vector[p] beta;
+  vector[p] beta;
   vector[n] phi;
   real<lower = 0> tau; 
-  real<lower = 0, upper = 0.99> alpha; // spatial dependence
-  real<lower = 0.001> sigma;
-  vector<lower = U>[n_cens]  y_cens;// todo: change to upper for crash rate
+  real<lower = 0, upper = 0.99> alpha; // spatial dependence, not allowing IAR
+  real<lower = 0> sigma; // todo: might need some higher bound to avoid divergences
+  vector<upper = U>[n_cens] y_cens;// to-be estimated censored values < 0
 }
 transformed parameters {
     vector[n] y;
@@ -95,15 +87,9 @@ transformed parameters {
     y[ii_cens] = y_cens;
 }
 model {
-  int j = 1;
-  sigma ~ gamma(0.001, 0.001);
+  sigma ~ gamma(0.001, 0.001); // todo: these vals were for 1/σ^2. 
   tau ~ gamma(2, 2); // todo - this is from CARstan, but might need something else...
   phi ~ sparse_car(tau, alpha, W_sparse, D_sparse, lambda, n, W_n);
-  //beta ~ normal(0, 2); // todo: some prior for theta instead?
-  y ~ normal(Q_ast * theta + phi, sigma);
-  //y ~ normal(X * beta + phi, sigma);
-}
-generated quantities{
-    vector[p] beta;
-    beta = R_ast_inverse * theta; // coefficients on X
+  beta ~ normal(0, 2); // todo: ~ normal(0, 10000) was used in paper, but this suits to the params.
+  y ~ normal(X * beta + phi, sigma);
 }

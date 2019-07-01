@@ -1,3 +1,5 @@
+import os 
+import sys
 import geopandas as gpd
 import pandas as pd
 import numpy as np
@@ -8,6 +10,7 @@ from pystan import StanModel, check_hmc_diagnostics
 from sklearn.preprocessing import MaxAbsScaler
 from joblib import dump
 
+os.chdir(sys.path[0])
 
 #Use crash data to later infere crash counts
 mappedCrashData = gpd.read_file(Path('data/NewYorkCrashes_Mapped.shp'))
@@ -23,19 +26,46 @@ segmentData =  gpd.read_file(Path('data/Segment_NewYork2017_Mapped.shp'))
 #Remove unnecessary columns
 segmentData = segmentData.drop(columns=['Join_Count', 'TARGET_FID', 'FID_Segmen', 
                  'Id', 'FID_NewYor', 'Year_Recor', 'State_Code', 'Route_ID', 'Begin_Poin', 'End_Point', 
-                 'Route_Numb', 'Route_Name', 'Urban_Code', 'County_Cod',  'NHS', 'STRAHNET', 'Truck_NN', 
+                 'Route_Numb', 'Route_Name', 'Urban_Code', 'County_Cod', 'STRAHNET', 'Truck_NN', 
                  'AADT_Singl', 'AADT_Combi', 'Toll_Charg', 'Toll_ID', 'Toll_Type', 'ESRI_OID', 'Shape_Leng',
-                 'geometry',])
+                 'geometry','PSR','Route_Qual','Route_Sign','IRI','Access_Con'])
 
 segmentData = segmentData.rename(columns={'F_System': 'Fun_Class',
                            'Facility_T': 'Facility_Type',
-                           'F_System': 'Fun_Class',
                            'Speed_Limi': 'Speed_Limit',
-                           'Access_Con': 'Access_Control'
+                           #'Access_Con': 'Access_Control',
+                           #'Route_Qual': 'Route_Qualifier',
+                           'Through_La': 'Through_Lanes'                                           
                            })
+
+segmentData = pd.DataFrame(segmentData)
 
 #Set speed limits to 25 due to Manhattans wide 25 mph regulatory
 segmentData["Speed_Limit"] = segmentData["Speed_Limit"].replace(0,25)
+
+
+
+#Remap faciltiy type #Remap facility type 1= One-Way Roadway.2=Two-Way Roadway. 3 = Other (4=Ramp,5=Non-Mainline,6=Non-Inventory Direction)
+
+#Remap functional class (1 interstate, 2 Principal Arterial (2,3), 3 Minor Arterial(4), 4 Others (5,6,7))
+segmentData['Fun_Class'] =segmentData['Fun_Class'].replace([2, 3], 2)
+segmentData['Fun_Class'] =segmentData['Fun_Class'].replace([4],3)
+segmentData['Fun_Class'] =segmentData['Fun_Class'].replace([5,6,7], 4)
+
+segmentData['Segment_ID'] =segmentData['Segment_ID'].astype(int)
+
+#Transform to categorical
+segmentData['Fun_Class'] = pd.Categorical(segmentData.Fun_Class) # Functional class
+segmentData['Facility_Type'] = pd.Categorical(segmentData.Facility_Type) # Facility type (one-way road, two-way road etc.)
+segmentData['Speed_Limit'] = pd.Categorical(segmentData.Speed_Limit) # Speed limit
+#segmentData['Through_Lanes'] = pd.Categorical(segmentData.Through_Lanes) # Lanes for through traffic
+segmentData['NHS'] = pd.Categorical(segmentData.NHS) # Part of National Highway System
+segmentData['Ownership'] = pd.Categorical(segmentData.Ownership) # Ownership (Values: 32 Local Toll Authority ,1 State Hwy Agency,4 City or Municipal Hwy Agency, 12 Local Park, Forest, or Reservation Agency.)
+
+
+#Additional variables
+#AADT
+#(Length_m)
 
 
 ###############################################################################################################################
@@ -90,7 +120,7 @@ desc = segmentDF.describe()
 
 # first very simply approach: run tobit model on a fraction of the dataset with 
 # Three non-categorical vals as predictors (ok, Through_La technically is...)
-predictors = ['ones', 'Length_m', 'AADT', 'Through_La']
+predictors = ['ones', 'Length_m', 'AADT', 'Through_Lanes']
 
 # some verifications before using the data: 
 # - is the adjacency matrix symmetric? Necessary for generating a sparse

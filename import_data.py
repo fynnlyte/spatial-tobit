@@ -264,48 +264,45 @@ def morans_i(number_road_segments, adjacencyMatrix, crash_rates):
         denominator += np.square(crash_rates[i] - global_avg_crash_rate)
     return (number_road_segments * numerator) / (sum_adjacency_weights * denominator)
 
-def z_score(number_road_segments, adjacencyMatrix, crash_rates, morans_i):
-    mean =  -1/(number_road_segments - 1)
+def z_score(n, adjacencyMatrix, crash_rates, morans_i):
+    mean =  -1/(n - 1)
 
     # helper functions for calculating the variance
-    s1 = 0
+    # calc for variance from https://en.wikipedia.org/wiki/Moran%27s_I
+    s1_helper = 0
     s2_helper = 0
     s2 = 0
     sum_adjacency_weights = 0
     global_avg_crash_rate = crash_rates.mean()
     s3_helper1 = 0
     s3_helper2 = 0
-    for i in range(number_road_segments):
-        for j in range(number_road_segments):
-            s1 += 1/2 * np.square(adjacencyMatrix[i][j] + adjacencyMatrix[j][i])
-            s2_helper += 2* adjacencyMatrix[i][j]
+
+    for i in range(n):
+        for j in range(n):
+            s1_helper += np.square(2 * adjacencyMatrix[i][j])
+            s2_helper += 2 * adjacencyMatrix[i][j]
             sum_adjacency_weights += adjacencyMatrix[i][j]
         s2 += np.square(s2_helper)
         s3_helper1 += np.power(crash_rates[i] - global_avg_crash_rate, 4)
         s3_helper2 += np.power(crash_rates[i] - global_avg_crash_rate, 2)
-    s3 = number_road_segments * s3_helper1 / \
-         (np.square(s3_helper2/number_road_segments) * number_road_segments)
-    s4 = (np.square(number_road_segments) - 3 * number_road_segments + 3) * s1 - \
-         number_road_segments * s2 + 3 * np.square(sum_adjacency_weights)
-    s5 = (np.square(number_road_segments) - number_road_segments) * s1 - \
-         2 * number_road_segments * s2 + 6 * np.square(sum_adjacency_weights)
+    s1 = (1 / 2) * s1_helper
+    s3 = s3_helper1 / \
+         (np.square(s3_helper2 / n) * n)
+    s4 = (np.square(n) - 3 * n + 3) * s1 - \
+         n * s2 + 3 * np.square(sum_adjacency_weights)
+    s5 = (np.square(n) - n) * s1 - \
+         2 * n * s2 + 6 * np.square(sum_adjacency_weights)
     # print('s1', s1, 's2', s2, 's3', s3, 's4', s4, 's5', s5)
 
-
-
-    variance = ((number_road_segments * s4) - (s3 * s5)) / \
-               ((number_road_segments - 1) * (number_road_segments - 2) * (number_road_segments - 3) * np.square(sum_adjacency_weights))\
+    variance = ((n * s4) - (s3 * s5)) / \
+               ((n - 1) * (n - 2) * (n - 3) * np.square(sum_adjacency_weights)) \
                - np.square(mean)
 
     print(np.sqrt(variance))
     return (morans_i - mean) / np.sqrt(variance)
 
+
 moransi = morans_i(len(segmentData), adjacencyMatrix, segmentData['CrashRate'])
 zscore = z_score(len(segmentData), adjacencyMatrix, segmentData['CrashRate'], moransi)
 
 print('morans i:', moransi, 'z-score:', zscore)
-
-
-
-
-

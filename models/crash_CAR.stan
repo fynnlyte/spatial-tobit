@@ -87,7 +87,7 @@ parameters {
   real<lower = 0> tau; 
   real<lower = 0, upper = 0.99> alpha; // spatial dependence, not allowing IAR
   real<lower = 0> sigma; // todo: might need some higher bound to avoid divergences
-  vector<upper = U>[n_cens] y_cens;// to-be estimated censored values < 0
+  vector<upper = U>[n_cens] y_cens; // to-be estimated censored values < 0
 }
 transformed parameters {
     vector[n] y;
@@ -95,7 +95,7 @@ transformed parameters {
     y[ii_cens] = y_cens;
 }
 model {
-  sigma ~ gamma(0.001, 0.001); // todo: these vals were for 1/σ^2. 
+  sigma ~ gamma(2, 0.001); // also here this prior??
   tau ~ gamma(2, 2); // todo - this is from CARstan, but might need something else...
   phi ~ sparse_car(tau, alpha, W_sparse, D_sparse, lambda, n, W_n);
   //theta ~ normal(0, 2); // todo: might need a prior for theta instead of beta then.

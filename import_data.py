@@ -5,10 +5,12 @@ import pandas as pd
 import numpy as np
 import itertools
 import networkx as nx
+import arviz as az
+import matplotlib.pyplot as plt
 from pathlib import Path
-from pystan import StanModel
+from pystan import StanModel, check_hmc_diagnostics
 from sklearn.preprocessing import MaxAbsScaler
-from joblib import dump
+from joblib import dump, load
 
 os.chdir(sys.path[0])
 
@@ -164,45 +166,69 @@ def get_tobit_dict(filtered_df: pd.DataFrame, filtered_matrix):
                   'X': filtered_df[predictors]}
     return tobit_dict
 
-def run_tobit_model(tobit_dict, tobit_model):
+def run_tobit_model(tobit_dict, tobit_model, iters, warmup):
     tobit_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
-    tobit_fit = tobit_model.sampling(data=tobit_dict, iter=5000, warmup=500,
+    tobit_fit = tobit_model.sampling(data=tobit_dict, iter=iters, warmup=warmup,
                                      control=tobit_params)
     tobit_info = tobit_fit.stansummary()
-    with open(Path('data/crash_tobit_QR_gam.log'), 'w') as t_log:
+    t_name = 'data/crash_tobit_QR_{}-{}'.format(iters, warmup)
+    with open(Path(t_name + '.log'), 'w') as t_log:
         t_log.write(tobit_info)
-    dump(tobit_fit, Path('data/crash_tobit_QR_gam.joblib'))
+    dump(tobit_model, Path(t_name + '_model.joblib'))
+    dump(tobit_fit, Path(t_name + '_fit.joblib'))
     return tobit_fit
 
-def run_car_model(tobit_dict, car_model, filtered_matrix):
+def run_car_model(tobit_dict, car_model, filtered_matrix, iters, warmup):
     c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
     car_dict = tobit_dict.copy()
     car_dict['W'] = filtered_matrix
     car_dict['W_n'] = filtered_matrix.sum()//2
     car_dict['n'] = tobit_dict['X'].shape[0]
-    car_fit = car_model.sampling(data=car_dict, iter=5000, warmup=500, 
+    car_fit = car_model.sampling(data=car_dict, iter=iters, warmup=warmup, 
                                  control=c_params, check_hmc_diagnostics=True)
     car_info = car_fit.stansummary()
-    with open('data/crash_car_qr_5000.log', 'w') as c_log:
+    car_name = 'data/crash_car_qr_{}-{}'.format(iters, warmup)
+    with open(Path(car_name + '.log'), 'w') as c_log:
         c_log.write(car_info)
-    dump(car_fit, 'data/crash_car_qr_5000.joblib')
+    dump(car_model, Path(car_name + '_model.joblib'))
+    dump(car_fit, Path(car_name + '_fit.joblib'))
     return car_fit
 
 
 # TOBIT MODEL:
-# running for ~5h with n=5000 did not give the warnings anymore! Just need higher n!
+# running for ~5h with n=5000:
+# sigma: 6.2e-6  with std: 1.7e-7
 tobit_model = StanModel(file=Path('models/crash_tobit.stan').open(),
                         extra_compile_args=["-w"])
 tobit_dict = get_tobit_dict(segmentDF, adjacencyMatrix)
-tobit_fit = run_tobit_model(tobit_dict, tobit_model, adjacencyMatrix)
+tobit_fit = run_tobit_model(tobit_dict, tobit_model, 5000, 500)
 
 # SPATIAL TOBIT MODEL:
 car_model = StanModel(file=Path('models/crash_CAR.stan').open(),
                       extra_compile_args=["-w"])
 car_fit = run_car_model(tobit_dict, car_model)
-# WARNING: E-BFMI 0.001 - 0.06
-# I could also run more chains -> Have 8 threads available if I just let run overnight
+# sigma: 1.4e-3 with std: 5.4e-4. weird.
 
+# I could also run more chains -> Have 8 threads available if I just let run overnight
+# chains took 1832, 2155, 2869 and 3767 secs
+
+# WARNING: E-BFMI 0.005 - 0.008 still with iter=5000
+# but: R-hat is usually OK
+check_hmc_diagnostics(car_fit)
+az.plot_trace(car_fit, compact=True)
+az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
+#  I'm having a lot of divergences where:
+# - sigma below 0.0025 -> try to constrain? Or is this exactly where it becomes interesting?
+# -> might just mean: don't expect the CAR effects to explain too much...
+# as expected - α is now usually in a range between 0.0 and 0.4
+plt.scatter(car_fit['lp__'], car_fit['sigma'])
+# looks correlated and in need of reparametrisation.
+n, bins, patches = plt.hist(car_fit['sigma'], bins=200)
+# make a cut at where it drops after the peak? Would be 0.000310073
+
+# WARNING:pystan:1754 of 18000 iterations ended with a divergence (9.74 %).
+# WARNING:pystan:Try running with adapt_delta larger than 0.95 to remove the divergences.
+# WARNING:pystan:3 of 18000 iterations saturated the maximum tree depth of 15 (0.0167 %)
 
 ########################################################################################################################
 # Calculate Moran's I

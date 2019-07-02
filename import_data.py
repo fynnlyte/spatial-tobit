@@ -178,7 +178,7 @@ def add_car_info_to_dict(tobit_dict, filtered_matrix):
 def run_or_load_model(m_type, m_dict, iters, warmup):
     if m_type not in ['car', 'tobit']:
         raise Exception('Invalid model type!')
-    name = 'data/crash_{}_qr_{}-{}'.format(m_type,iters, warmup)
+    name = 'data/crash_{}_QR_{}-{}'.format(m_type,iters, warmup)
     try:
         model = load(Path(name + '_model.joblib'))
     except:
@@ -188,7 +188,7 @@ def run_or_load_model(m_type, m_dict, iters, warmup):
     try:
         fit = load(Path(name + '_fit.joblib'))
     except:
-        c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+        c_params = {'adapt_delta': 0.8, 'max_treedepth': 15}
         fit = model.sampling(data=m_dict, iter=iters, warmup=warmup,
                              control=c_params, check_hmc_diagnostics=True)
         info = car_fit.stansummary()

@@ -1,5 +1,7 @@
 # custom added: large files.
 data/
+# config
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

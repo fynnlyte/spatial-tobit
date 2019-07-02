@@ -12,6 +12,8 @@ from pystan import StanModel, check_hmc_diagnostics
 from sklearn.preprocessing import MaxAbsScaler
 from joblib import dump, load
 
+plt.rcParams["figure.figsize"] = (16,12)
+plt.rcParams["font.size"] = 20
 os.chdir(sys.path[0])
 
 # Use crash data to later infere crash counts
@@ -128,7 +130,7 @@ desc = segmentDF.describe()
 
 # first very simply approach: run tobit model on a fraction of the dataset with
 # Three non-categorical vals as predictors (ok, Through_La technically is...)
-predictors = ['Length_m', 'AADT', 'Through_La']
+predictors = ['Length_m', 'AADT', 'Through_Lanes']
 
 # some verifications before using the data:
 # - is the adjacency matrix symmetric? Necessary for generating a sparse
@@ -152,7 +154,7 @@ if empty_row_count > 0:
 # model begins here
 ###
 
-def get_tobit_dict(filtered_df: pd.DataFrame, filtered_matrix):
+def get_tobit_dict(filtered_df: pd.DataFrame):
     trans = MaxAbsScaler().fit_transform(filtered_df[predictors + ['CrashRate']])
     data_centered = pd.DataFrame(trans, columns=predictors + ['CrashRate'])
     threshold = 0.0000000001
@@ -166,62 +168,77 @@ def get_tobit_dict(filtered_df: pd.DataFrame, filtered_matrix):
                   'X': filtered_df[predictors]}
     return tobit_dict
 
-def run_tobit_model(tobit_dict, tobit_model, iters, warmup):
-    tobit_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
-    tobit_fit = tobit_model.sampling(data=tobit_dict, iter=iters, warmup=warmup,
-                                     control=tobit_params)
-    tobit_info = tobit_fit.stansummary()
-    t_name = 'data/crash_tobit_QR_{}-{}'.format(iters, warmup)
-    with open(Path(t_name + '.log'), 'w') as t_log:
-        t_log.write(tobit_info)
-    dump(tobit_model, Path(t_name + '_model.joblib'))
-    dump(tobit_fit, Path(t_name + '_fit.joblib'))
-    return tobit_fit
-
-def run_car_model(tobit_dict, car_model, filtered_matrix, iters, warmup):
-    c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+def add_car_info_to_dict(tobit_dict, filtered_matrix):
     car_dict = tobit_dict.copy()
     car_dict['W'] = filtered_matrix
     car_dict['W_n'] = filtered_matrix.sum()//2
     car_dict['n'] = tobit_dict['X'].shape[0]
-    car_fit = car_model.sampling(data=car_dict, iter=iters, warmup=warmup, 
-                                 control=c_params, check_hmc_diagnostics=True)
-    car_info = car_fit.stansummary()
-    car_name = 'data/crash_car_qr_{}-{}'.format(iters, warmup)
-    with open(Path(car_name + '.log'), 'w') as c_log:
-        c_log.write(car_info)
-    dump(car_model, Path(car_name + '_model.joblib'))
-    dump(car_fit, Path(car_name + '_fit.joblib'))
-    return car_fit
+    return car_dict
 
+def run_or_load_model(m_type, m_dict, iters, warmup):
+    if m_type not in ['car', 'tobit']:
+        raise Exception('Invalid model type!')
+    name = 'data/crash_{}_qr_{}-{}'.format(m_type,iters, warmup)
+    try:
+        model = load(Path(name + '_model.joblib'))
+    except:
+        model = StanModel(file=Path('models/crash_{}.stan'.format(m_type)).open(),
+                          extra_compile_args=["-w"])
+        dump(model, Path(name + '_model.joblib'))
+    try:
+        fit = load(Path(name + '_fit.joblib'))
+    except:
+        c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+        fit = model.sampling(data=m_dict, iter=iters, warmup=warmup, 
+                             control=c_params, check_hmc_diagnostics=True)
+        info = car_fit.stansummary()
+        with open(Path(name + '.log'), 'w') as c_log:
+            c_log.write(info)
+        dump(fit, Path(name + '_fit.joblib'))
+    return model, fit
+
+
+### running the models
+    
+#todo: what about the sigma adjustment???
+iters = 5000
+warmups = 500
 
 # TOBIT MODEL:
 # running for ~5h with n=5000:
 # sigma: 6.2e-6  with std: 1.7e-7
-tobit_model = StanModel(file=Path('models/crash_tobit.stan').open(),
-                        extra_compile_args=["-w"])
-tobit_dict = get_tobit_dict(segmentDF, adjacencyMatrix)
-tobit_fit = run_tobit_model(tobit_dict, tobit_model, 5000, 500)
+
+tobit_dict = get_tobit_dict(segmentDF)
+tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmups)
+
+plt.hist(tobit_fit['sigma'], bins=int(iters*4/100))
+az.plot_trace(tobit_fit)
+#plt.scatter(tobit_fit['lp__'], tobit_fit['sigma'])
+
 
 # SPATIAL TOBIT MODEL:
-car_model = StanModel(file=Path('models/crash_CAR.stan').open(),
-                      extra_compile_args=["-w"])
-car_fit = run_car_model(tobit_dict, car_model)
 # sigma: 1.4e-3 with std: 5.4e-4. weird.
+
+car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
+car_fit = run_or_load_model('car', car_dict, iters, warmups)
+
+plt.hist(car_fit['sigma'], bins=int(iters*4/100))
+az.plot_trace(car_fit, compact=True)
+az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
+plt.scatter(car_fit['lp__'], car_fit['sigma'])
+
+
 
 # I could also run more chains -> Have 8 threads available if I just let run overnight
 # chains took 1832, 2155, 2869 and 3767 secs
 
 # WARNING: E-BFMI 0.005 - 0.008 still with iter=5000
 # but: R-hat is usually OK
-check_hmc_diagnostics(car_fit)
-az.plot_trace(car_fit, compact=True)
-az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
+
 #  I'm having a lot of divergences where:
 # - sigma below 0.0025 -> try to constrain? Or is this exactly where it becomes interesting?
 # -> might just mean: don't expect the CAR effects to explain too much...
 # as expected - α is now usually in a range between 0.0 and 0.4
-plt.scatter(car_fit['lp__'], car_fit['sigma'])
 # looks correlated and in need of reparametrisation.
 n, bins, patches = plt.hist(car_fit['sigma'], bins=200)
 # make a cut at where it drops after the peak? Would be 0.000310073

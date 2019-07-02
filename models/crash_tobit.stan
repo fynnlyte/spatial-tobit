@@ -30,7 +30,7 @@ transformed parameters {
     y[ii_cens] = y_cens;
 }
 model {
-    sigma ~ gamma(2, 0.001); // trying this as prior.
+    sigma ~ gamma(0.001, 0.001); // or: 1/sigma
     y ~ normal(Q_ast * theta + beta_zero, sigma);
 }
 generated quantities{

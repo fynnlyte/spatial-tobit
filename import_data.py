@@ -192,7 +192,7 @@ def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
     except:
         fit = model.sampling(data=m_dict, iter=iters, warmup=warmup,
                              control=c_params, check_hmc_diagnostics=True)
-        info = car_fit.stansummary()
+        info = fit.stansummary()
         with open(Path(name + '.log'), 'w') as c_log:
             c_log.write(info)
         dump(fit, Path(name + '_fit.joblib'))
@@ -204,8 +204,6 @@ def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
 #todo: what about the sigma adjustment???
 iters = 5000
 warmup = 500
-c_params = 
-
 
 # TOBIT MODEL:
 # running for ~5h with n=5000:
@@ -213,6 +211,7 @@ c_params =
 t_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
 tobit_dict = get_tobit_dict(segmentDF)
 tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmup, t_c_params)
+check_hmc_diagnostics(tobit_fit)
 
 plt.hist(tobit_fit['sigma'], bins=int(iters*4/100))
 az.plot_trace(tobit_fit)
@@ -223,7 +222,8 @@ az.plot_trace(tobit_fit)
 # sigma: 1.4e-3 with std: 5.4e-4. weird.
 c_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
 car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
-car_fit = run_or_load_model('car', car_dict, iters, warmup, c_params)
+car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_params)
+check_hmc_diagnostics(car_fit)
 
 plt.hist(car_fit['sigma'], bins=int(iters*4/100))
 az.plot_trace(car_fit, compact=True)

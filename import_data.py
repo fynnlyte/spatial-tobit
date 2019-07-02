@@ -214,6 +214,8 @@ tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmup, t
 check_hmc_diagnostics(tobit_fit)
 
 plt.hist(tobit_fit['sigma'], bins=int(iters*4/100))
+plt.title('tobit')
+
 az.plot_trace(tobit_fit)
 #plt.scatter(tobit_fit['lp__'], tobit_fit['sigma'])
 
@@ -226,6 +228,7 @@ car_model, car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_param
 check_hmc_diagnostics(car_fit)
 
 plt.hist(car_fit['sigma'], bins=int(iters*4/100))
+plt.title('car')
 az.plot_trace(car_fit, compact=True)
 az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
 plt.scatter(car_fit['lp__'], car_fit['sigma'])

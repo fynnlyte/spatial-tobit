@@ -175,10 +175,12 @@ def add_car_info_to_dict(tobit_dict, filtered_matrix):
     car_dict['n'] = tobit_dict['X'].shape[0]
     return car_dict
 
-def run_or_load_model(m_type, m_dict, iters, warmup):
+def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
     if m_type not in ['car', 'tobit']:
         raise Exception('Invalid model type!')
-    name = 'data/crash_{}_QR_{}-{}'.format(m_type,iters, warmup)
+    name = 'data/crash_{}_{}-{}_delta_{}_max_{}'.format(m_type,iters, warmup, 
+                                                           c_params['adapt_delta'],
+                                                           c_params['max_treedepth'])
     try:
         model = load(Path(name + '_model.joblib'))
     except:
@@ -188,7 +190,6 @@ def run_or_load_model(m_type, m_dict, iters, warmup):
     try:
         fit = load(Path(name + '_fit.joblib'))
     except:
-        c_params = {'adapt_delta': 0.8, 'max_treedepth': 15}
         fit = model.sampling(data=m_dict, iter=iters, warmup=warmup,
                              control=c_params, check_hmc_diagnostics=True)
         info = car_fit.stansummary()
@@ -202,14 +203,16 @@ def run_or_load_model(m_type, m_dict, iters, warmup):
 
 #todo: what about the sigma adjustment???
 iters = 5000
-warmups = 500
+warmup = 500
+c_params = 
+
 
 # TOBIT MODEL:
 # running for ~5h with n=5000:
 # sigma: 6.2e-6  with std: 1.7e-7
-
+t_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
 tobit_dict = get_tobit_dict(segmentDF)
-tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmups)
+tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmup, t_c_params)
 
 plt.hist(tobit_fit['sigma'], bins=int(iters*4/100))
 az.plot_trace(tobit_fit)
@@ -218,9 +221,9 @@ az.plot_trace(tobit_fit)
 
 # SPATIAL TOBIT MODEL:
 # sigma: 1.4e-3 with std: 5.4e-4. weird.
-
+c_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
 car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
-car_fit = run_or_load_model('car', car_dict, iters, warmups)
+car_fit = run_or_load_model('car', car_dict, iters, warmup, c_params)
 
 plt.hist(car_fit['sigma'], bins=int(iters*4/100))
 az.plot_trace(car_fit, compact=True)

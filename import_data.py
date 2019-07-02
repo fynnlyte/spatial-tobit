@@ -222,7 +222,7 @@ az.plot_trace(tobit_fit)
 # sigma: 1.4e-3 with std: 5.4e-4. weird.
 c_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
 car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
-car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_params)
+car_model, car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_params)
 check_hmc_diagnostics(car_fit)
 
 plt.hist(car_fit['sigma'], bins=int(iters*4/100))

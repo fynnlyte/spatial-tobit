@@ -215,9 +215,8 @@ check_hmc_diagnostics(tobit_fit)
 
 plt.hist(tobit_fit['sigma'], bins=int(iters*4/100))
 plt.title('tobit')
-
-az.plot_trace(tobit_fit)
-#plt.scatter(tobit_fit['lp__'], tobit_fit['sigma'])
+tob_vars = ['sigma', 'beta_zero', 'theta' ]
+az.plot_trace(tobit_fit, tob_vars)
 
 
 # SPATIAL TOBIT MODEL:
@@ -229,7 +228,9 @@ check_hmc_diagnostics(car_fit)
 
 plt.hist(car_fit['sigma'], bins=int(iters*4/100))
 plt.title('car')
-az.plot_trace(car_fit, compact=True)
+car_vars = ['sigma', 'beta_zero', 'theta', 'alpha', 'tau']
+az.plot_trace(car_fit, compact=False, var_names=car_vars)
+
 az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
 plt.scatter(car_fit['lp__'], car_fit['sigma'])
 

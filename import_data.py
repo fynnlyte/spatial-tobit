@@ -14,7 +14,7 @@ from joblib import dump, load
 
 plt.rcParams["figure.figsize"] = (16,12)
 plt.rcParams["font.size"] = 20
-os.chdir(sys.path[0])
+# os.chdir(sys.path[0])
 
 # Use crash data to later infere crash counts
 mappedCrashData = gpd.read_file(Path('data/NewYorkCrashes_Mapped.shp'))
@@ -202,8 +202,8 @@ def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
 ### running the models
 
 #todo: what about the sigma adjustment???
-iters = 5000
-warmup = 500
+iters = 5500
+warmup = 1500
 tobit_dict = get_tobit_dict(segmentDF)
 
 # TOBIT MODEL:
@@ -222,6 +222,7 @@ az.plot_trace(tobit_fit, tob_vars)
 
 # SPATIAL TOBIT MODEL:
 # sigma: 1.4e-3 with std: 5.4e-4. weird.
+# We expect the random error to be _lower_ than in the other model!!!
 c_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
 car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
 car_model, car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_params)

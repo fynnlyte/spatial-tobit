@@ -155,8 +155,8 @@ if empty_row_count > 0:
 ###
 
 def get_tobit_dict(filtered_df: pd.DataFrame):
-    trans = MaxAbsScaler().fit_transform(filtered_df[predictors + ['CrashRate']])
-    data_centered = pd.DataFrame(trans, columns=predictors + ['CrashRate'])
+    # trans = MaxAbsScaler().fit_transform(filtered_df[predictors + ['CrashRate']])
+    data_centered = pd.DataFrame(filtered_df, columns=predictors + ['CrashRate'])
     threshold = 0.0000000001
     is_cens = data_centered['CrashRate'] < threshold
     not_cens = data_centered['CrashRate'] >= threshold
@@ -204,12 +204,13 @@ def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
 #todo: what about the sigma adjustment???
 iters = 5000
 warmup = 500
+tobit_dict = get_tobit_dict(segmentDF)
 
 # TOBIT MODEL:
 # running for ~5h with n=5000:
 # sigma: 6.2e-6  with std: 1.7e-7
+
 t_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
-tobit_dict = get_tobit_dict(segmentDF)
 tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmup, t_c_params)
 check_hmc_diagnostics(tobit_fit)
 

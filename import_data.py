@@ -175,6 +175,10 @@ def add_car_info_to_dict(tobit_dict, filtered_matrix):
     car_dict['n'] = tobit_dict['X'].shape[0]
     return car_dict
 
+def get_full_dicte(segmentDF, adjMatrix):
+    ret = get_tobit_dict(segmentDF)
+    ret = add_car_info_to_dict(ret, adjMatrix)
+
 def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
     if m_type not in ['car', 'tobit']:
         raise Exception('Invalid model type!')
@@ -198,6 +202,14 @@ def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
         dump(fit, Path(name + '_fit.joblib'))
     return model, fit
 
+def compare_runtimes(segmentDF, adjMatrix):
+    iters = 1000
+    warmup = 250
+    models = ['models/comparison/tobit_for_loop.stan', 'models/comparison/tobit_vectorised.stan',
+              'models/crash_tobit.stan', 'models/comparison/CAR_simple.stan', 'models/crash_car.stan']
+    data = get_full_dict(segmentDF, adjMatrix) # n_obs, n_cens, p, ii_obs, ii_cens, y_obs, U, X
+    
+    for i, m_file in enumerate(models)
 
 ### running the models
 

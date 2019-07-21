@@ -95,10 +95,9 @@ transformed parameters {
     y[ii_cens] = y_cens;
 }
 model {
-  sigma ~ gamma(2, 0.001); // also here this prior??
-  tau ~ gamma(2, 2); // todo - this is from CARstan, but might need something else...
+  sigma ~ inv_gamma(0.001, 0.001); // also here this prior??
+  tau ~ gamma(2, 2); // this is from CARstan
   phi ~ sparse_car(tau, alpha, W_sparse, D_sparse, lambda, n, W_n);
-  //theta ~ normal(0, 2); // todo: might need a prior for theta instead of beta then.
   y ~ normal(Q_ast * theta + beta_zero + phi, sigma);
 }
 generated quantities{

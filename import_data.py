@@ -8,7 +8,6 @@ import arviz as az
 import matplotlib.pyplot as plt
 from pathlib import Path
 from pystan import StanModel, check_hmc_diagnostics
-#from sklearn.preprocessing import MaxAbsScaler # not necessary with QR decomposition
 from joblib import dump, load
 
 plt.rcParams["figure.figsize"] = (16,12)
@@ -50,22 +49,22 @@ segmentData["Speed_Limit"] = segmentData["Speed_Limit"].replace(0, 25)
 # Remap faciltiy type #Remap facility type 1= One-Way Roadway.2=Two-Way Roadway. 3 = Other (4=Ramp,5=Non-Mainline,6=Non-Inventory Direction)
 
 # Remap functional class (1 interstate, 2 Principal Arterial (2,3), 3 Minor Arterial(4), 4 Others (5,6,7))
-segmentData['Fun_Class'] = segmentData['Fun_Class'].replace([2, 3], 2)
-segmentData['Fun_Class'] = segmentData['Fun_Class'].replace([4], 3)
-segmentData['Fun_Class'] = segmentData['Fun_Class'].replace([5, 6, 7], 4)
+segmentData['Fun_Class'] = segmentData['Fun_Class'].astype(str)
+segmentData['Fun_Class'] = segmentData['Fun_Class'].replace('1', 'Interstate')
+segmentData['Fun_Class'] = segmentData['Fun_Class'].replace(['2', '3'], 'Principal_Arterial')
+segmentData['Fun_Class'] = segmentData['Fun_Class'].replace(['4'], 'Minor_Arterial')
+segmentData['Fun_Class'] = segmentData['Fun_Class'].replace(['5', '6', '7'], 'Others')
 
+# Facility type (one-way road, two-way road etc.)
+segmentData['Facility_Type'] = segmentData['Facility_Type'].astype(str)
+segmentData['Facility_Type'] = segmentData['Facility_Type'].replace('1', 'One-Way')
+segmentData['Facility_Type'] = segmentData['Facility_Type'].replace('2', 'Two-Way')
+segmentData['NHS'] = segmentData['NHS']
+
+
+# not used for computation:
 segmentData['Segment_ID'] = segmentData['Segment_ID'].astype(int)
 
-# Transform to categorical
-segmentData['Fun_Class'] = pd.Categorical(
-    segmentData.Fun_Class)  # Functional class
-# Facility type (one-way road, two-way road etc.)
-segmentData['Facility_Type'] = pd.Categorical(segmentData.Facility_Type)
-# nope, can use the values directly here.
-# segmentData['Speed_Limit'] = pd.Categorical(segmentData.Speed_Limit)  # Speed limit
-# segmentData['Through_Lanes'] = pd.Categorical(segmentData.Through_Lanes) # Lanes for through traffic
-# Part of National Highway System
-segmentData['NHS'] = pd.Categorical(segmentData.NHS)
 # Ownership (Values: 32 Local Toll Authority ,1 State Hwy Agency,4 City or Municipal Hwy Agency, 12 Local Park, Forest, or Reservation Agency.)
 segmentData['Ownership'] = pd.Categorical(segmentData.Ownership)
 
@@ -124,12 +123,35 @@ for i in range(len(intersection_list)):
 # Matrix needs to be cleaned up before model can be used :(
 # - May not contain any vertices without neighbors!
 
+# Stan does not support categorical features - need dummy variables.
+# none of the three implies 'Others'
+for kind in ['Interstate', 'Principal_Arterial', 'Minor_Arterial', 'Others']:
+    segmentData[kind] = (segmentData['Fun_Class'] == kind).astype(int)
+for kind in ['One-Way', 'Two-Way']:
+    segmentData[kind] = (segmentData['Facility_Type'] == kind).astype(int)
 segmentDF = pd.DataFrame(segmentData)
 desc = segmentDF.describe()
 
+
+
 # first very simply approach: run tobit model on a fraction of the dataset with
 # Three non-categorical vals as predictors (ok, Through_La technically is...)
-predictors = ['Length_m', 'AADT', 'Through_Lanes', 'NHS']
+# Not considering 
+predictors = ['Length_m', 'AADT', 'Through_Lanes', 'NHS', 'Interstate', 'Principal_Arterial', 
+              'Minor_Arterial', 'Two-Way']
+
+# calculate pearson correlation:
+corr_mat = np.ones((len(predictors), len(predictors)))
+for i, row in enumerate(predictors):
+    for j, col in enumerate(predictors):
+        if i !=j:
+            corr_mat[i,j] = segmentDF[row].corr(segmentDF[col])
+corr_df = pd.DataFrame(corr_mat, index=predictors, columns=predictors)
+corr_df.to_excel('logs/correlation.xlsx')
+# Basically, NHS means interstate. Also dropping Through_Lanes like the researchers
+# due to high correlation with aadt.
+predictors.remove('NHS')
+predictors.remove('Through_Lanes')
 
 # some verifications before using the data:
 # - is the adjacency matrix symmetric? Necessary for generating a sparse
@@ -153,18 +175,17 @@ if empty_row_count > 0:
 # model begins here
 ###
 
-def get_tobit_dict(filtered_df: pd.DataFrame):
-    # trans = MaxAbsScaler().fit_transform(filtered_df[predictors + ['CrashRate']])
-    data_centered = pd.DataFrame(filtered_df, columns=predictors + ['CrashRate'])
+def get_tobit_dict(df: pd.DataFrame):
     threshold = 0.0000000001
-    is_cens = data_centered['CrashRate'] < threshold
-    not_cens = data_centered['CrashRate'] >= threshold
-    ii_obs = filtered_df[not_cens].index + 1
-    ii_cens = filtered_df[is_cens].index + 1
+    is_cens = df['CrashRate'] < threshold
+    not_cens = df['CrashRate'] >= threshold
+    ii_obs = df[not_cens].index + 1
+    ii_cens = df[is_cens].index + 1
+
     tobit_dict = {'n_obs': not_cens.sum(), 'n_cens': is_cens.sum(), 'p': len(predictors),
                   'ii_obs': ii_obs, 'ii_cens': ii_cens,
-                  'y_obs': filtered_df[not_cens]['CrashRate'], 'U': threshold,
-                  'X': filtered_df[predictors]}
+                  'y_obs': df[not_cens]['CrashRate'], 'U': threshold,
+                  'X': df[predictors]}
     return tobit_dict
 
 def add_car_info_to_dict(tobit_dict, filtered_matrix):
@@ -204,16 +225,20 @@ def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
     return model, fit
 
 def compare_runtimes(segmentDF, adjMatrix):
-    iters = 50 # 1000
-    warmup = 25 # 250
+    """
+    usage: adjust main, run the script as `python3 import_data.py > log.txt` and then
+    call `grep -E "running model|Gradient|(Total)" log.txt` to read the relevant lines
+    """
+    iters = 2000
+    warmup = 250
     # 'models/comparison/CAR_simple.stan' -> this model runs forever even with iters = 100
     models = ['models/comparison/tobit_for_loop.stan', 'models/comparison/tobit_vectorised.stan',
-              'models/crash_tobit.stan', 'models/comparison/CAR_QR.stan', 'models/crash_car.stan']
+              'models/crash_tobit.stan', 'models/crash_car.stan', 'models/comparison/CAR_QR.stan']
     data = get_full_dict(segmentDF, adjMatrix) # n_obs, n_cens, p, ii_obs, ii_cens, y_obs, U, X
     model_and_fit = []
     
     for i, m_file in enumerate(models):
-        print(f'---* running model: {m_file} *---')
+        print(f'running model: {m_file}')
         m_name = m_file.split('/')[-1].split('.')[0]
         try:
             model = load(Path('cache/' + m_name + '.joblib'))
@@ -228,8 +253,8 @@ def compare_runtimes(segmentDF, adjMatrix):
 
 
 def run_and_plot_models(segmentDF, adjacencyMatrix):
-    iters = 5500
-    warmup = 1500
+    iters = 1000 # 25000
+    warmup = 200 # 2500
     tobit_dict = get_tobit_dict(segmentDF)
     
     # TOBIT MODEL:
@@ -343,6 +368,6 @@ def show_morans_and_z():
     print('morans i:', moransi, 'z-score:', zscore)
 
 ### comparing several approaches
-compare_runtimes(segmentDF, adjacencyMatrix)
+# compare_runtimes(segmentDF, adjacencyMatrix)
 ### running the models
-# run_and_plot_models(segmentDF, adjacencyMatrix):
+run_and_plot_models(segmentDF, adjacencyMatrix)

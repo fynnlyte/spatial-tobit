@@ -95,7 +95,7 @@ transformed parameters {
     y[ii_cens] = y_cens;
 }
 model {
-  sigma ~ inv_gamma(0.001, 0.001); // also here this prior??
+  sigma ~ inv_gamma(0.001, 0.001);
   tau ~ gamma(2, 2); // this is from CARstan
   phi ~ sparse_car(tau, alpha, W_sparse, D_sparse, lambda, n, W_n);
   y ~ normal(Q_ast * theta + beta_zero + phi, sigma);

@@ -11,8 +11,15 @@ data {
   matrix<lower = 0, upper = 1>[n, n] W;
 }
 transformed data{
-  matrix<lower = 0>[n, n] D;
   vector[n] zeros;
+  matrix<lower = 0>[n, n] D;
+  matrix[n, p] Q_ast;
+  matrix[p, p] R_ast;
+  matrix[p, p] R_ast_inverse;
+  // thin and scale the QR decomposition
+  Q_ast = qr_Q(X)[, 1:p] * sqrt(n - 1);
+  R_ast = qr_R(X)[1:p, ] / sqrt(n - 1);
+  R_ast_inverse = inverse(R_ast);
   {
     vector[n] W_rowsums;
     for (i in 1:n) {
@@ -24,7 +31,7 @@ transformed data{
 }
 parameters {
   real<lower = 0> sigma;
-  vector[p] beta;
+  vector[p] theta; // coefficients on Q_ast;
   real beta_zero;
   vector[n] phi;
   real<lower = 0> tau;
@@ -40,5 +47,9 @@ model {
   sigma ~ inv_gamma(0.001, 0.001);  
   tau ~ gamma(2, 2);
   phi ~ multi_normal_prec(zeros, tau * (D - alpha * W));
-  y ~ normal(X * beta + beta_zero + phi, sigma);
+  y ~ normal(Q_ast * theta + beta_zero + phi, sigma);
+}
+generated quantities{
+    vector[p] beta;
+    beta = R_ast_inverse * theta; // coefficients on X
 }

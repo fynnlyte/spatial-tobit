@@ -4,12 +4,11 @@ import geopandas as gpd
 import pandas as pd
 import numpy as np
 import itertools
-import networkx as nx
 import arviz as az
 import matplotlib.pyplot as plt
 from pathlib import Path
 from pystan import StanModel, check_hmc_diagnostics
-from sklearn.preprocessing import MaxAbsScaler
+#from sklearn.preprocessing import MaxAbsScaler # not necessary with QR decomposition
 from joblib import dump, load
 
 plt.rcParams["figure.figsize"] = (16,12)
@@ -62,8 +61,8 @@ segmentData['Fun_Class'] = pd.Categorical(
     segmentData.Fun_Class)  # Functional class
 # Facility type (one-way road, two-way road etc.)
 segmentData['Facility_Type'] = pd.Categorical(segmentData.Facility_Type)
-segmentData['Speed_Limit'] = pd.Categorical(
-    segmentData.Speed_Limit)  # Speed limit
+# nope, can use the values directly here.
+# segmentData['Speed_Limit'] = pd.Categorical(segmentData.Speed_Limit)  # Speed limit
 # segmentData['Through_Lanes'] = pd.Categorical(segmentData.Through_Lanes) # Lanes for through traffic
 # Part of National Highway System
 segmentData['NHS'] = pd.Categorical(segmentData.NHS)
@@ -130,7 +129,7 @@ desc = segmentDF.describe()
 
 # first very simply approach: run tobit model on a fraction of the dataset with
 # Three non-categorical vals as predictors (ok, Through_La technically is...)
-predictors = ['Length_m', 'AADT', 'Through_Lanes']
+predictors = ['Length_m', 'AADT', 'Through_Lanes', 'NHS']
 
 # some verifications before using the data:
 # - is the adjacency matrix symmetric? Necessary for generating a sparse
@@ -175,9 +174,11 @@ def add_car_info_to_dict(tobit_dict, filtered_matrix):
     car_dict['n'] = tobit_dict['X'].shape[0]
     return car_dict
 
-def get_full_dicte(segmentDF, adjMatrix):
+def get_full_dict(segmentDF, adjMatrix):
     ret = get_tobit_dict(segmentDF)
+    ret['y'] = segmentDF['CrashRate']
     ret = add_car_info_to_dict(ret, adjMatrix)
+    return ret
 
 def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
     if m_type not in ['car', 'tobit']:
@@ -203,50 +204,63 @@ def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
     return model, fit
 
 def compare_runtimes(segmentDF, adjMatrix):
-    iters = 1000
-    warmup = 250
+    iters = 50 # 1000
+    warmup = 25 # 250
+    # 'models/comparison/CAR_simple.stan' -> this model runs forever even with iters = 100
     models = ['models/comparison/tobit_for_loop.stan', 'models/comparison/tobit_vectorised.stan',
-              'models/crash_tobit.stan', 'models/comparison/CAR_simple.stan', 'models/crash_car.stan']
+              'models/crash_tobit.stan', 'models/comparison/CAR_QR.stan', 'models/crash_car.stan']
     data = get_full_dict(segmentDF, adjMatrix) # n_obs, n_cens, p, ii_obs, ii_cens, y_obs, U, X
+    model_and_fit = []
     
-    for i, m_file in enumerate(models)
-
-### running the models
-
-#todo: what about the sigma adjustment???
-iters = 5500
-warmup = 1500
-tobit_dict = get_tobit_dict(segmentDF)
-
-# TOBIT MODEL:
-# running for ~5h with n=5000:
-# sigma: 6.2e-6  with std: 1.7e-7
-
-t_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
-tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmup, t_c_params)
-check_hmc_diagnostics(tobit_fit)
-
-plt.hist(tobit_fit['sigma'], bins=int(iters*4/100))
-plt.title('tobit')
-tob_vars = ['sigma', 'beta_zero', 'theta' ]
-az.plot_trace(tobit_fit, tob_vars)
+    for i, m_file in enumerate(models):
+        print(f'---* running model: {m_file} *---')
+        m_name = m_file.split('/')[-1].split('.')[0]
+        try:
+            model = load(Path('cache/' + m_name + '.joblib'))
+        except:
+            model = StanModel(model_name=m_name, file=Path(m_file).open(),
+                              extra_compile_args=['-w'])
+            dump(model, Path('cache/' + m_name + '.joblib'))
+        fit = model.sampling(data=data, iter=iters, warmup=warmup, 
+                             control= {'adapt_delta': 0.95, 'max_treedepth': 15})
+        model_and_fit.append((model, fit))
+    return model_and_fit
 
 
-# SPATIAL TOBIT MODEL:
-# sigma: 1.4e-3 with std: 5.4e-4. weird.
-# We expect the random error to be _lower_ than in the other model!!!
-c_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
-car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
-car_model, car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_params)
-check_hmc_diagnostics(car_fit)
-
-plt.hist(car_fit['sigma'], bins=int(iters*4/100))
-plt.title('car')
-car_vars = ['sigma', 'beta_zero', 'theta', 'alpha', 'tau']
-az.plot_trace(car_fit, compact=False, var_names=car_vars)
-
-az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
-plt.scatter(car_fit['lp__'], car_fit['sigma'])
+def run_and_plot_models(segmentDF, adjacencyMatrix):
+    iters = 5500
+    warmup = 1500
+    tobit_dict = get_tobit_dict(segmentDF)
+    
+    # TOBIT MODEL:
+    # running for ~5h with n=5000:
+    # sigma: 6.2e-6  with std: 1.7e-7
+    
+    t_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+    tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmup, t_c_params)
+    check_hmc_diagnostics(tobit_fit)
+    
+    plt.hist(tobit_fit['sigma'], bins=int(iters*4/100))
+    plt.title('tobit')
+    tob_vars = ['sigma', 'beta_zero', 'theta' ]
+    az.plot_trace(tobit_fit, tob_vars)
+    
+    
+    # SPATIAL TOBIT MODEL:
+    # sigma: 1.4e-3 with std: 5.4e-4. weird.
+    # We expect the random error to be _lower_ than in the other model!!!
+    c_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+    car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
+    car_model, car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_params)
+    check_hmc_diagnostics(car_fit)
+    
+    plt.hist(car_fit['sigma'], bins=int(iters*4/100))
+    plt.title('car')
+    car_vars = ['sigma', 'beta_zero', 'theta', 'alpha', 'tau']
+    az.plot_trace(car_fit, compact=False, var_names=car_vars)
+    
+    az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
+    plt.scatter(car_fit['lp__'], car_fit['sigma'])
 
 
 
@@ -261,7 +275,7 @@ plt.scatter(car_fit['lp__'], car_fit['sigma'])
 # -> might just mean: don't expect the CAR effects to explain too much...
 # as expected - α is now usually in a range between 0.0 and 0.4
 # looks correlated and in need of reparametrisation.
-n, bins, patches = plt.hist(car_fit['sigma'], bins=200)
+# n, bins, patches = plt.hist(car_fit['sigma'], bins=200)
 # make a cut at where it drops after the peak? Would be 0.000310073
 
 # WARNING:pystan:1754 of 18000 iterations ended with a divergence (9.74 %).
@@ -322,8 +336,13 @@ def z_score(n, adjacencyMatrix, crash_rates, morans_i):
     print(np.sqrt(variance))
     return (morans_i - mean) / np.sqrt(variance)
 
+def show_morans_and_z():
+    moransi = morans_i(len(segmentData), adjacencyMatrix, segmentData['CrashRate'])
+    zscore = z_score(len(segmentData), adjacencyMatrix, segmentData['CrashRate'], moransi)
+    
+    print('morans i:', moransi, 'z-score:', zscore)
 
-moransi = morans_i(len(segmentData), adjacencyMatrix, segmentData['CrashRate'])
-zscore = z_score(len(segmentData), adjacencyMatrix, segmentData['CrashRate'], moransi)
-
-print('morans i:', moransi, 'z-score:', zscore)
+### comparing several approaches
+compare_runtimes(segmentDF, adjacencyMatrix)
+### running the models
+# run_and_plot_models(segmentDF, adjacencyMatrix):

@@ -5,7 +5,7 @@ data {
     int<lower=1, upper = n_obs + n_cens> ii_obs[n_obs]; // indices of observed
     int<lower=1, upper = n_obs + n_cens> ii_cens[n_cens]; // indices of censored
     vector[n_obs] y_obs;  // all uncensored variables
-    real<lower=max(y_obs)> U; // censoring point
+    real<upper=min(y_obs)> U; // censoring point
     matrix[n_cens+n_obs, p] X; // predictor matrix (all values)
 }
 transformed data {
@@ -13,6 +13,7 @@ transformed data {
 }
 parameters {
     vector[p] beta;
+    real beta_zero;
     real<lower=0> sigma;
     vector<lower=U>[n_cens] y_cens;
 }
@@ -23,5 +24,5 @@ transformed parameters {
 }
 model {
     sigma ~ inv_gamma(0.001, 0.001);
-    y ~ normal(X * beta, sigma);
+    y ~ normal(X * beta + beta_zero, sigma);
 }

@@ -28,7 +28,7 @@ parameters {
   real beta_zero;
   vector[n] phi;
   real<lower = 0> tau;
-  real<lower = 0, upper = 0.99> alpha;
+  real<lower = 0, upper = 1> alpha;
   vector<upper = U>[n_cens] y_cens;// to-be estimated censored values < 0
 }
 transformed parameters {

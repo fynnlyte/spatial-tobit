@@ -85,7 +85,7 @@ parameters {
   real beta_zero; // intercept
   vector[n] phi;
   real<lower = 0> tau; 
-  real<lower = 0, upper = 0.99> alpha; // spatial dependence, not allowing IAR
+  real<lower = 0, upper = 1> alpha; // spatial dependence
   real<lower = 0> sigma; // todo: might need some higher bound to avoid divergences
   vector<upper = U>[n_cens] y_cens; // to-be estimated censored values < 0
 }

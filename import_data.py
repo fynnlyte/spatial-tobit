@@ -218,7 +218,7 @@ def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
         model = load(Path('cache/' + name + '_model.joblib'))
     except:
         model = StanModel(file=Path('models/crash_{}.stan'.format(m_type)).open(),
-                          extra_compile_args=["-w"], model_name=name)
+                          extra_compile_args=["-w"], model_name=name.split('-')[0])
         dump(model, Path('cache/' + name + '_model.joblib'))
     try:
         fit = load(Path('cache/' + name + '_fit.joblib'))
@@ -261,8 +261,8 @@ def compare_runtimes(segmentDF, adjMatrix):
 
 
 def run_and_plot_models(segmentDF, adjacencyMatrix):
-    iters = 10000
-    warmup = 2500
+    iters = 30000
+    warmup = 5000
     tobit_dict = get_tobit_dict(segmentDF)
     
     # TOBIT MODEL:

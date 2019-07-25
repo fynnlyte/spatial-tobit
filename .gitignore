@@ -1,5 +1,7 @@
 # custom added: large files.
-data/
+data/*
+logs/*
+cache/*
 # config
 .vscode/
 

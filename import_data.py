@@ -10,9 +10,13 @@ from pathlib import Path
 from pystan import StanModel, check_hmc_diagnostics
 from joblib import dump, load
 
+
+# os.chdir(sys.path[0]) # seems to be needed on windows?
+for folder in ['cache', 'logs']:
+    os.makedirs(folder, exist_ok=True)
+        
 plt.rcParams["figure.figsize"] = (16,12)
 plt.rcParams["font.size"] = 20
-# os.chdir(sys.path[0])
 
 # Use crash data to later infere crash counts
 mappedCrashData = gpd.read_file(Path('data/NewYorkCrashes_Mapped.shp'))
@@ -93,7 +97,7 @@ segmentData['Crashes'] = crashArray.astype(int)
 
 # Calculate crash rate
 crashRate = segmentData['Crashes'] / \
-    (segmentData['AADT']*(segmentData['Length_m']*1000)*365/1000000)
+    (segmentData['AADT']*(segmentData['Length_m']/1000)*365/1000000)
 segmentData['CrashRate'] = crashRate
 
 
@@ -150,7 +154,10 @@ corr_df = pd.DataFrame(corr_mat, index=predictors, columns=predictors)
 corr_df.to_excel('logs/correlation.xlsx')
 # Basically, NHS means interstate. Also dropping Through_Lanes like the researchers
 # due to high correlation with aadt.
-predictors.remove('NHS')
+#predictors.remove('NHS')
+predictors.remove('Interstate')
+predictors.remove('Principal_Arterial')
+predictors.remove('Minor_Arterial')
 predictors.remove('Through_Lanes')
 
 # some verifications before using the data:
@@ -204,30 +211,31 @@ def get_full_dict(segmentDF, adjMatrix):
 def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
     if m_type not in ['car', 'tobit']:
         raise Exception('Invalid model type!')
-    name = 'data/crash_{}_{}-{}_delta_{}_max_{}'.format(m_type,iters, warmup, 
+    name = 'crash_{}_{}-{}_delta_{}_max_{}'.format(m_type,iters, warmup, 
                                                            c_params['adapt_delta'],
                                                            c_params['max_treedepth'])
     try:
-        model = load(Path(name + '_model.joblib'))
+        model = load(Path('cache/' + name + '_model.joblib'))
     except:
         model = StanModel(file=Path('models/crash_{}.stan'.format(m_type)).open(),
-                          extra_compile_args=["-w"])
-        dump(model, Path(name + '_model.joblib'))
+                          extra_compile_args=["-w"], model_name=name)
+        dump(model, Path('cache/' + name + '_model.joblib'))
     try:
-        fit = load(Path(name + '_fit.joblib'))
+        fit = load(Path('cache/' + name + '_fit.joblib'))
     except:
         fit = model.sampling(data=m_dict, iter=iters, warmup=warmup,
                              control=c_params, check_hmc_diagnostics=True)
         info = fit.stansummary()
-        with open(Path(name + '.log'), 'w') as c_log:
+        with open(Path('logs/' + name + '.log'), 'w') as c_log:
             c_log.write(info)
-        dump(fit, Path(name + '_fit.joblib'))
+        dump(fit, Path('cache/' + name + '_fit.joblib'))
     return model, fit
 
 def compare_runtimes(segmentDF, adjMatrix):
     """
     usage: adjust main, run the script as `python3 import_data.py > log.txt` and then
     call `grep -E "running model|Gradient|(Total)" log.txt` to read the relevant lines
+    most likely won't work on Windows as there seems to be less output.
     """
     iters = 2000
     warmup = 250
@@ -253,14 +261,11 @@ def compare_runtimes(segmentDF, adjMatrix):
 
 
 def run_and_plot_models(segmentDF, adjacencyMatrix):
-    iters = 1000 # 25000
-    warmup = 200 # 2500
+    iters = 10000
+    warmup = 2500
     tobit_dict = get_tobit_dict(segmentDF)
     
     # TOBIT MODEL:
-    # running for ~5h with n=5000:
-    # sigma: 6.2e-6  with std: 1.7e-7
-    
     t_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
     tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmup, t_c_params)
     check_hmc_diagnostics(tobit_fit)
@@ -272,8 +277,6 @@ def run_and_plot_models(segmentDF, adjacencyMatrix):
     
     
     # SPATIAL TOBIT MODEL:
-    # sigma: 1.4e-3 with std: 5.4e-4. weird.
-    # We expect the random error to be _lower_ than in the other model!!!
     c_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
     car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
     car_model, car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_params)
@@ -287,25 +290,6 @@ def run_and_plot_models(segmentDF, adjacencyMatrix):
     az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
     plt.scatter(car_fit['lp__'], car_fit['sigma'])
 
-
-
-# I could also run more chains -> Have 8 threads available if I just let run overnight
-# chains took 1832, 2155, 2869 and 3767 secs
-
-# WARNING: E-BFMI 0.005 - 0.008 still with iter=5000
-# but: R-hat is usually OK
-
-#  I'm having a lot of divergences where:
-# - sigma below 0.0025 -> try to constrain? Or is this exactly where it becomes interesting?
-# -> might just mean: don't expect the CAR effects to explain too much...
-# as expected - α is now usually in a range between 0.0 and 0.4
-# looks correlated and in need of reparametrisation.
-# n, bins, patches = plt.hist(car_fit['sigma'], bins=200)
-# make a cut at where it drops after the peak? Would be 0.000310073
-
-# WARNING:pystan:1754 of 18000 iterations ended with a divergence (9.74 %).
-# WARNING:pystan:Try running with adapt_delta larger than 0.95 to remove the divergences.
-# WARNING:pystan:3 of 18000 iterations saturated the maximum tree depth of 15 (0.0167 %)
 
 ########################################################################################################################
 # Calculate Moran's I
@@ -368,6 +352,6 @@ def show_morans_and_z():
     print('morans i:', moransi, 'z-score:', zscore)
 
 ### comparing several approaches
-# compare_runtimes(segmentDF, adjacencyMatrix)
+compare_runtimes(segmentDF, adjacencyMatrix)
 ### running the models
-run_and_plot_models(segmentDF, adjacencyMatrix)
+# run_and_plot_models(segmentDF, adjacencyMatrix)

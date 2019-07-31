@@ -1,49 +1,43 @@
-## Ressourcen
-[Conditional Autoregressive Models in Stan](https://github.com/mbjoseph/CARstan). Hiervon hatte ich auch einiges für die Präsi verwendet.
+## Installation and usage
 
-[Stan Documentation über censored data](https://mc-stan.org/docs/2_18/stan-users-guide/truncated-or-censored-data.html). Das will ich mit ein paar Testdaten implementieren. Oder trifft _truncated data_ eher auf's Tobit model zu?
+- Python 3.7
+
+- [VirtualEnv](https://virtualenv.pypa.io/en/stable/installation/) or Anaconda unless you want to install the required packages within your system's Python. `sudo apt-get install virtualenv` on Ubuntu.
+
+- a `C++`-Compiler for PyStan. On Ubuntu, run `sudo apt-get install build-essential`. On Windows, follow [these instructions](https://pystan.readthedocs.io/en/latest/windows.html).
 
 
-## Anleitung
 
-Moin - installiert bitte [Anaconda](https://www.anaconda.com/distribution/) bzw [Miniconda](https://docs.conda.io/en/latest/miniconda.html) wenn ihr's noch nicht habt. Anschließend cloned ihr mein Repo dorthin, wo ihr es haben wollt, und richtet es dann ein:
+#### Installation
 
-```
-git clone https://github.com/LyteFM/spatial-tobit.git
-# bzw mit ssh keys, wenn ihr's eingerichtet habt
-# git clone git@github.com:LyteFM/spatial-tobit.git
-cd spatial-tobit
-```
-
----
-
-Vanessa - Du kannst deine Umgebung so einrichten:
+Run the following commands or perform the equivalent operations on Windows
 
 ```bash
-conda create --name probmod --file spec-file.txt
-source activate probmod
-pip install pystan 
+# download and unpack code
+git clone https://github.com/LyteFM/spatial-tobit.git 
+# change working directory into unpacked folder
+cd spatial-tobit
+# create and activate your virtual/ conda environment 
+virtualenv --python=python3.7 venv
+source venv/bin/activate
+# install the required python dependencies
+pip install -r requirements.txt
 ```
 
-Christian - Bei dir geht's nur manuell:
+#### Running
 
-```
-conda create -n probmod python=3.7 anaconda
-(source) activate probmod # on windows, source prefix might not work
-conda install libpython m2w64-toolchain -c msys2
-conda install numpy cython matplotlib scipy pandas -c conda-forge -y
-pip install pystan
-conda clean -p -y # free some space after change to conda-forge
+If you want to run less than the 30000 iterations that we ran to obtain our results, adjust the numbers for `iter` and `warmup` in the last line of `import_data.py` accordingly. Then, run the file e.g. within Spyder or from the command line with:
+
+```bash
+python3 import_data.py
 ```
 
-Und falls irgendwas nicht klappt, hier schauen:
+If you wish to compare the runtimes instead of running the two most efficient implementations, comment and uncomment the respective lines at the and of the file and save the output. 
 
-[https://pystan.readthedocs.io/en/latest/windows.html#windows](https://pystan.readthedocs.io/en/latest/windows.html#windows)
+The models are cached into the `cache` folder and will be loaded again on subsequent runs with the same `iter` and `warmup`. The parameter results are saved into the `logs` folder.
 
----
+With an Arggis Pro installation and the `arcpy` package, you can also do the geospatial mapping with `geoprocessing_NewYork.py`. Some more example models on a test dataset can be explored in `pystan_example.py`. 
 
-Anschließend innerhalb der Umgebung (sollte `(probmod)` noch sichtbar sein) testen, ob die Installation geklappt hat:
+# 
 
-`python pystan_example.py`
 
-Die Umgebung lassen wir dann erstmal so und sollten eigentlich keine komischen Überraschungen durch unterschiedliche Versionen bekommen. Müssten auch alle Pakete zum Data Cleaning, Visualisieren etc dabei sein. Programme wie Spyder/ Jupyter Notebook könnt ihr natürlich auch wieder deinstallieren / aus dem Spec-File rausnehmen, wenn ihr die nicht verwendet.

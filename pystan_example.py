@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
-from joblib import dump, load
+from joblib import dump
 import arviz as az
 import networkx as nx
 import seaborn as sns

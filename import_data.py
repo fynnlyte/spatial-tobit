@@ -18,6 +18,10 @@ for folder in ['cache', 'logs']:
 plt.rcParams["figure.figsize"] = (16,12)
 plt.rcParams["font.size"] = 20
 
+########################################################################################
+# Data Loading and preprocessing
+###
+
 # Use crash data to later infere crash counts
 mappedCrashData = gpd.read_file(Path('data/NewYorkCrashes_Mapped.shp'))
 # Delete values with join_dist = -1 -> they are not mapped
@@ -70,15 +74,14 @@ segmentData['NHS'] = segmentData['NHS']
 segmentData['Segment_ID'] = segmentData['Segment_ID'].astype(int)
 
 # Ownership (Values: 32 Local Toll Authority ,1 State Hwy Agency,4 City or Municipal Hwy Agency, 12 Local Park, Forest, or Reservation Agency.)
-segmentData['Ownership'] = pd.Categorical(segmentData.Ownership)
-
+segmentData['Ownership'] = segmentData['Ownership'].astype(str)
+for i, name in (('1', 'State_Hwy'), ('32', 'Local_Toll_Authority'), ('4', 'Local_Hwy'), ('12', 'Other_Auth')):
+    segmentData['Ownership'] = segmentData['Ownership'].replace(i, name)
 
 # Additional variables
 # AADT
 # (Length_m)
 
-
-###############################################################################################################################
 # Map crash amounts to segements
 # Infere crashes per segment
 
@@ -100,8 +103,6 @@ crashRate = segmentData['Crashes'] / \
     (segmentData['AADT']*(segmentData['Length_m']/1000)*365/1000000)
 segmentData['CrashRate'] = crashRate
 
-
-###############################################################################################################################
 # Create adjacency matrix
 n_segments = len(segmentData)
 adjacencyMatrix = np.zeros((n_segments, n_segments), dtype=int)
@@ -122,20 +123,25 @@ for i in range(len(intersection_list)):
         # print(tup)
         adjacencyMatrix[int(tup[0]), int(tup[1])] = 1
 
-#######################################################################################################
-# Use segmentData and adjacencyMatrix
-# Matrix needs to be cleaned up before model can be used :(
-# - May not contain any vertices without neighbors!
+########################################################################################
 
-# Stan does not support categorical features - need dummy variables.
-# none of the three implies 'Others'
+########################################################################################
+# Variable selection and verification
+# 
+        
 for kind in ['Interstate', 'Principal_Arterial', 'Minor_Arterial', 'Others']:
     segmentData[kind] = (segmentData['Fun_Class'] == kind).astype(int)
 for kind in ['One-Way', 'Two-Way']:
     segmentData[kind] = (segmentData['Facility_Type'] == kind).astype(int)
+for kind in ['State_Hwy','Local_Toll_Authority','Local_Hwy','Other_Auth']:
+    segmentData[kind] = (segmentData['Ownership'] == kind).astype(int)
 segmentDF = pd.DataFrame(segmentData)
 desc = segmentDF.describe()
+for kind in desc.columns:
+    desc[kind][0] = (segmentData[kind] > 0.0000000001).sum()
+desc.to_excel(Path('logs/description.xlsx'))
 
+segmentDF.drop(['Other_Auth', 'Fun_Class', 'Facility_Type', 'Ownership'], axis=1, inplace=True)
 
 
 # first very simply approach: run tobit model on a fraction of the dataset with
@@ -145,13 +151,13 @@ predictors = ['Length_m', 'AADT', 'Through_Lanes', 'NHS', 'Interstate', 'Princip
               'Minor_Arterial', 'Two-Way']
 
 # calculate pearson correlation:
-corr_mat = np.ones((len(predictors), len(predictors)))
-for i, row in enumerate(predictors):
-    for j, col in enumerate(predictors):
+corr_mat = np.ones((len(segmentDF.columns), len(segmentDF.columns)))
+for i, row in enumerate(segmentDF.columns):
+    for j, col in enumerate(segmentDF.columns):
         if i !=j:
             corr_mat[i,j] = segmentDF[row].corr(segmentDF[col])
-corr_df = pd.DataFrame(corr_mat, index=predictors, columns=predictors)
-corr_df.to_excel('logs/correlation.xlsx')
+corr_df = pd.DataFrame(corr_mat, index=segmentDF.columns, columns=segmentDF.columns)
+corr_df.to_excel(Path('logs/correlation.xlsx'))
 # Basically, NHS means interstate. Also dropping Through_Lanes like the researchers
 # due to high correlation with aadt.
 #predictors.remove('NHS')
@@ -178,122 +184,10 @@ if empty_row_count > 0:
     print('adj matrix has %s rows/cols without any edge.' % empty_row_count)
 
 
+########################################################################################
+#  Calculate Moran's I and Z score
 ###
-# model begins here
-###
-
-def get_tobit_dict(df: pd.DataFrame):
-    threshold = 0.0000000001
-    is_cens = df['CrashRate'] < threshold
-    not_cens = df['CrashRate'] >= threshold
-    ii_obs = df[not_cens].index + 1
-    ii_cens = df[is_cens].index + 1
-
-    tobit_dict = {'n_obs': not_cens.sum(), 'n_cens': is_cens.sum(), 'p': len(predictors),
-                  'ii_obs': ii_obs, 'ii_cens': ii_cens,
-                  'y_obs': df[not_cens]['CrashRate'], 'U': threshold,
-                  'X': df[predictors]}
-    return tobit_dict
-
-def add_car_info_to_dict(tobit_dict, filtered_matrix):
-    car_dict = tobit_dict.copy()
-    car_dict['W'] = filtered_matrix
-    car_dict['W_n'] = filtered_matrix.sum()//2
-    car_dict['n'] = tobit_dict['X'].shape[0]
-    return car_dict
-
-def get_full_dict(segmentDF, adjMatrix):
-    ret = get_tobit_dict(segmentDF)
-    ret['y'] = segmentDF['CrashRate']
-    ret = add_car_info_to_dict(ret, adjMatrix)
-    return ret
-
-def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
-    if m_type not in ['car', 'tobit']:
-        raise Exception('Invalid model type!')
-    name = 'crash_{}_{}-{}_delta_{}_max_{}'.format(m_type,iters, warmup, 
-                                                           c_params['adapt_delta'],
-                                                           c_params['max_treedepth'])
-    try:
-        model = load(Path('cache/' + name + '_model.joblib'))
-    except:
-        model = StanModel(file=Path('models/crash_{}.stan'.format(m_type)).open(),
-                          extra_compile_args=["-w"], model_name=name.split('-')[0])
-        dump(model, Path('cache/' + name + '_model.joblib'))
-    try:
-        fit = load(Path('cache/' + name + '_fit.joblib'))
-    except:
-        fit = model.sampling(data=m_dict, iter=iters, warmup=warmup,
-                             control=c_params, check_hmc_diagnostics=True)
-        info = fit.stansummary()
-        with open(Path('logs/' + name + '.log'), 'w') as c_log:
-            c_log.write(info)
-        dump(fit, Path('cache/' + name + '_fit.joblib'))
-    return model, fit
-
-def compare_runtimes(segmentDF, adjMatrix):
-    """
-    usage: adjust main, run the script as `python3 import_data.py > log.txt` and then
-    call `grep -E "running model|Gradient|(Total)" log.txt` to read the relevant lines
-    most likely won't work on Windows as there seems to be less output.
-    """
-    iters = 2000
-    warmup = 250
-    # 'models/comparison/CAR_simple.stan' -> this model runs forever even with iters = 100
-    models = ['models/comparison/tobit_for_loop.stan', 'models/comparison/tobit_vectorised.stan',
-              'models/crash_tobit.stan', 'models/crash_car.stan', 'models/comparison/CAR_QR.stan']
-    data = get_full_dict(segmentDF, adjMatrix) # n_obs, n_cens, p, ii_obs, ii_cens, y_obs, U, X
-    model_and_fit = []
     
-    for i, m_file in enumerate(models):
-        print(f'running model: {m_file}')
-        m_name = m_file.split('/')[-1].split('.')[0]
-        try:
-            model = load(Path('cache/' + m_name + '.joblib'))
-        except:
-            model = StanModel(model_name=m_name, file=Path(m_file).open(),
-                              extra_compile_args=['-w'])
-            dump(model, Path('cache/' + m_name + '.joblib'))
-        fit = model.sampling(data=data, iter=iters, warmup=warmup, 
-                             control= {'adapt_delta': 0.95, 'max_treedepth': 15})
-        model_and_fit.append((model, fit))
-    return model_and_fit
-
-
-def run_and_plot_models(segmentDF, adjacencyMatrix):
-    iters = 30000
-    warmup = 5000
-    tobit_dict = get_tobit_dict(segmentDF)
-    
-    # TOBIT MODEL:
-    t_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
-    tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmup, t_c_params)
-    check_hmc_diagnostics(tobit_fit)
-    
-    plt.hist(tobit_fit['sigma'], bins=int(iters*4/100))
-    plt.title('tobit')
-    tob_vars = ['sigma', 'beta_zero', 'theta' ]
-    az.plot_trace(tobit_fit, tob_vars)
-    
-    
-    # SPATIAL TOBIT MODEL:
-    c_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
-    car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
-    car_model, car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_params)
-    check_hmc_diagnostics(car_fit)
-    
-    plt.hist(car_fit['sigma'], bins=int(iters*4/100))
-    plt.title('car')
-    car_vars = ['sigma', 'beta_zero', 'theta', 'alpha', 'tau']
-    az.plot_trace(car_fit, compact=False, var_names=car_vars)
-    
-    az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
-    plt.scatter(car_fit['lp__'], car_fit['sigma'])
-
-
-########################################################################################################################
-# Calculate Moran's I
-
 def morans_i(number_road_segments, adjacencyMatrix, crash_rates):
     global_avg_crash_rate = crash_rates.mean()
     numerator = 0
@@ -351,7 +245,127 @@ def show_morans_and_z():
     
     print('morans i:', moransi, 'z-score:', zscore)
 
-### comparing several approaches
-compare_runtimes(segmentDF, adjacencyMatrix)
-### running the models
-# run_and_plot_models(segmentDF, adjacencyMatrix)
+########################################################################################
+
+
+########################################################################################
+# Running the models
+###
+
+def get_tobit_dict(df: pd.DataFrame):
+    threshold = 0.0000000001
+    is_cens = df['CrashRate'] < threshold
+    not_cens = df['CrashRate'] >= threshold
+    ii_obs = df[not_cens].index + 1
+    ii_cens = df[is_cens].index + 1
+
+    tobit_dict = {'n_obs': not_cens.sum(), 'n_cens': is_cens.sum(), 'p': len(predictors),
+                  'ii_obs': ii_obs, 'ii_cens': ii_cens,
+                  'y_obs': df[not_cens]['CrashRate'], 'U': threshold,
+                  'X': df[predictors]}
+    return tobit_dict
+
+def add_car_info_to_dict(tobit_dict, filtered_matrix):
+    car_dict = tobit_dict.copy()
+    car_dict['W'] = filtered_matrix
+    car_dict['W_n'] = filtered_matrix.sum()//2
+    car_dict['n'] = tobit_dict['X'].shape[0]
+    return car_dict
+
+def get_full_dict(segmentDF, adjMatrix):
+    ret = get_tobit_dict(segmentDF)
+    ret['y'] = segmentDF['CrashRate']
+    ret = add_car_info_to_dict(ret, adjMatrix)
+    return ret
+
+def run_or_load_model(m_type, m_dict, iters, warmup, c_params):
+    if m_type not in ['car', 'tobit']:
+        raise Exception('Invalid model type!')
+    name = 'crash_{}_{}-{}_delta_{}_max_{}'.format(m_type,iters, warmup, 
+                                                           c_params['adapt_delta'],
+                                                           c_params['max_treedepth'])
+    try:
+        model = load(Path('cache/' + name + '_model.joblib'))
+    except:
+        model = StanModel(file=Path('models/crash_{}.stan'.format(m_type)).open(),
+                          extra_compile_args=["-w"], model_name=name.split('-')[0])
+        dump(model, Path('cache/' + name + '_model.joblib'))
+    try:
+        fit = load(Path('cache/' + name + '_fit.joblib'))
+    except:
+        fit = model.sampling(data=m_dict, iter=iters, warmup=warmup,
+                             control=c_params, check_hmc_diagnostics=True)
+        info = fit.stansummary()
+        with open(Path('logs/' + name + '.log'), 'w') as c_log:
+            c_log.write(info)
+        dump(fit, Path('cache/' + name + '_fit.joblib'))
+    return model, fit
+
+def compare_runtimes(segmentDF, adjMatrix):
+    """
+    usage: adjust main, run the script as `python3 import_data.py > log.txt` and then
+    call `grep -E "running model|Gradient|(Total)" log.txt` to read the relevant lines
+    most likely won't work on Windows as there seems to be less output.
+    """
+    iters = 5000
+    warmup = 1000
+    # 'models/comparison/CAR_simple.stan' -> this model runs forever even with iters = 100
+    models = ['models/comparison/tobit_for_loop.stan', 'models/comparison/tobit_vectorised.stan',
+              
+              'models/crash_tobit.stan', 'models/crash_car.stan', 'models/comparison/CAR_QR.stan', 
+              'models/comparison/CAR_simple.stan' ]
+    data = get_full_dict(segmentDF, adjMatrix) # n_obs, n_cens, p, ii_obs, ii_cens, y_obs, U, X
+    model_and_fit = []
+    
+    for i, m_file in enumerate(models):
+        print(f'running model: {m_file}')
+        m_name = m_file.split('/')[-1].split('.')[0]
+        try:
+            model = load(Path(f'cache/profiling_{m_name}.joblib'))
+        except:
+            model = StanModel(model_name=m_name, file=Path(m_file).open(),
+                              extra_compile_args=['-w'])
+            dump(model, Path(f'cache/{m_name}.joblib'))
+        fit = model.sampling(data=data, iter=iters, warmup=warmup, 
+                             control= {'adapt_delta': 0.95, 'max_treedepth': 15})
+        model_and_fit.append((model, fit))
+    return model_and_fit
+
+
+def run_and_plot_models(segmentDF, adjacencyMatrix, iters, warmup):
+
+    tobit_dict = get_tobit_dict(segmentDF)
+    
+    # TOBIT MODEL:
+    t_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+    tobit_model, tobit_fit = run_or_load_model('tobit', tobit_dict, iters, warmup, t_c_params)
+    check_hmc_diagnostics(tobit_fit)
+    
+    plt.hist(tobit_fit['sigma'], bins=int(iters*4/100))
+    plt.title('tobit')
+    tob_vars = ['sigma', 'beta_zero', 'theta' ]
+    az.plot_trace(tobit_fit, tob_vars)
+    
+    
+    # SPATIAL TOBIT MODEL:
+    c_c_params = {'adapt_delta': 0.95, 'max_treedepth': 15}
+    car_dict = add_car_info_to_dict(tobit_dict, adjacencyMatrix)
+    car_model, car_fit = run_or_load_model('car', car_dict, iters, warmup, c_c_params)
+    check_hmc_diagnostics(car_fit)
+    
+    plt.hist(car_fit['sigma'], bins=int(iters*4/100))
+    plt.title('car')
+    car_vars = ['sigma', 'beta_zero', 'theta', 'alpha', 'tau']
+    az.plot_trace(car_fit, compact=False, var_names=car_vars)
+    
+    az.plot_pair(car_fit, ['tau', 'alpha', 'sigma'], divergences=True)
+    plt.scatter(car_fit['lp__'], car_fit['sigma'])
+    plt.hist(car_fit['phi'].mean(axis=0),bins=50)
+
+
+show_morans_and_z()
+### comparing several approaches 
+#compare_runtimes(segmentDF, adjacencyMatrix)
+
+### running the models (change to lower values for faster computation)
+run_and_plot_models(segmentDF, adjacencyMatrix, 30000, 5000)

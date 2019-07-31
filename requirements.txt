@@ -9,3 +9,4 @@ arviz==0.4.1
 joblib==0.13.2
 networkx==2.2
 seaborn==0.9.0
+openpyxl==2.6.1

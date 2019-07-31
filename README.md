@@ -1,5 +1,7 @@
 ## Installation and usage
 
+#### Prerequesites
+
 - Python 3.7
 
 - [VirtualEnv](https://virtualenv.pypa.io/en/stable/installation/) or Anaconda unless you want to install the required packages within your system's Python. `sudo apt-get install virtualenv` on Ubuntu.
